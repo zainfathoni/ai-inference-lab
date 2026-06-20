@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 — Thread → Block → Grid, the Triton way</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<h1>Triton deletes a level</h1>
+<p class="sub">Lesson 1 · mission: understand the GPU execution model · the diagram, re-drawn for Triton</p>
+
+<p>The diagram you shared is the <b>CUDA</b> execution model: three nested levels —
+a <span class="lvl grid">GRID</span> of <span class="lvl block">BLOCKS</span>, each block a 3-D set of
+<span class="lvl thread">THREADS</span>. CUDA asks you to write code from the point of view of
+<em>one single thread</em>, which figures out which data element it owns using
+<code>blockIdx</code> and <code>threadIdx</code>.</p>
+
+<p>Triton keeps the grid and the block. It <span class="gone">deletes the thread</span> from your code.
+You write one program that owns a whole <b>block of data at once</b>. That is the entire idea of
+this lesson — everything below is detail.</p>
+
+<h2>The three levels, in one breath</h2>
+<table>
+<tr><th>Level</th><th>In the diagram</th><th>What it is</th></tr>
+<tr><td><span class="lvl grid">GRID</span></td><td>the big outer cube, <code>gridDim.{x,y,z}</code></td><td>All the work for one kernel launch.</td></tr>
+<tr><td><span class="lvl block">BLOCK</span></td><td>the small purple cube at <code>(1,0)</code>, <code>blockDim.{x,y,z}</code></td><td>A group of threads that can share fast memory and synchronize.</td></tr>
+<tr><td><span class="lvl thread">THREAD</span></td><td>the tiny orange cell at <code>(2,3)</code></td><td>"A single thread of computation, minding its own business" — processes one scalar.</td></tr>
+</table>
+
+<h2>CUDA vs Triton: who writes what</h2>
+<div class="compare">
+  <div class="c-cuda">
+    <h4>CUDA — you are one thread</h4>
+    <ul>
+      <li>Your code runs once <em>per thread</em>.</li>
+      <li>You compute <em>your</em> element: <code>i = blockIdx.x*blockDim.x + threadIdx.x</code>.</li>
+      <li>You manage shared memory, <code>__syncthreads()</code>, coalescing, vectorization — by hand.</li>
+      <li>Mental unit: a <b>scalar</b>.</li>
+    </ul>
+  </div>
+  <div class="c-triton">
+    <h4>Triton — you are one program</h4>
+    <ul>
+      <li>Your code runs once <em>per block</em> (called a <span class="keep">program instance</span>).</li>
+      <li>You compute <em>your block's</em> range of elements with <code>tl.program_id(0)</code>.</li>
+      <li>The compiler does shared memory, sync, coalescing, vectorization <span class="keep">for you</span>.</li>
+      <li>Mental unit: a <b>tile</b> (a small array).</li>
+    </ul>
+  </div>
+</div>
+
+<p>OpenAI's own words: Triton revisits the SPMD model and proposes "a variant in which
+<b>programs — rather than threads — are blocked</b>." Kernels are "launched concurrently with
+different <code>program_id</code>'s on a grid of so-called instances."
+<a href="https://openai.com/index/triton/">(Introducing Triton, OpenAI)</a></p>
+
+<h2>The vocabulary map</h2>
+<table>
+<tr><th>CUDA (the diagram)</th><th>Triton</th><th>Note</th></tr>
+<tr><td><code>blockIdx.x</code></td><td><code>tl.program_id(axis=0)</code></td><td>Which block/program am I? (Literally reads <code>blockIdx.x</code> in the compiled PTX.)</td></tr>
+<tr><td><code>gridDim.x</code></td><td>the launch <code>grid</code> tuple</td><td>How many programs were launched.</td></tr>
+<tr><td><code>blockDim.x</code></td><td><code>BLOCK_SIZE</code> (a <code>tl.constexpr</code>)</td><td>How many <em>elements</em> one program owns — set by you, tuned by autotuner.</td></tr>
+<tr><td><code>threadIdx.x</code></td><td><span class="gone">— none —</span></td><td>There is no thread index in Triton. The compiler owns the threads.</td></tr>
+</table>
+
+<h2>See it in the canonical first kernel</h2>
+<p>Vector add: <code>output = x + y</code>. Watch how every line is about the <em>block</em>, never a thread.</p>
+
+<pre><code>@triton.jit
+def add_kernel(x_ptr, y_ptr, output_ptr, n_elements,
+               BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)            # which block am I?  (≈ blockIdx.x)
+    block_start = pid * BLOCK_SIZE         # first element MY block owns
+    offsets = block_start + tl.arange(0, BLOCK_SIZE)   # a whole TILE of indices
+    mask = offsets &lt; n_elements            # guard the ragged last block
+    x = tl.load(x_ptr + offsets, mask=mask)            # load the tile
+    y = tl.load(y_ptr + offsets, mask=mask)
+    output = x + y                         # one op over the WHOLE tile
+    tl.store(output_ptr + offsets, output, mask=mask)  # store the tile</code></pre>
+<p class="srcline">Source (official tutorial):
+  <a class="gh" href="https://triton-lang.org/main/getting-started/tutorials/01-vector-add.html">Triton · Vector Addition↗</a></p>
+
+<pre><code># launch: how many programs (blocks) do we need?
+grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
+add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)</code></pre>
+
+<p>The tells that you're at the block level, not the thread level:</p>
+<ul>
+  <li><code>tl.arange(0, BLOCK_SIZE)</code> — you build an <b>array of offsets</b>, not a single index.</li>
+  <li><code>output = x + y</code> — one line adds <b>1024 elements at once</b>. In CUDA this would be one scalar add, run by 1024 separate threads.</li>
+  <li><code>mask</code> — because a program owns a fixed-size tile, the last (ragged) block masks off the overflow. This is the price of thinking in tiles.</li>
+</ul>
+
+<blockquote>"But surely the threads still exist?" Yes — on the hardware. <code>tl.program_id(0)</code>
+compiles down to <code>blockIdx.x</code>, and the tile becomes many threads. The point is they're
+<b>absent from your source code</b>: the compiler does coalescing, thread swizzling, shared-memory
+allocation/synchronization, vectorization and tensor-core scheduling for you.
+<a href="https://triton-lang.org/main/programming-guide/chapter-1/introduction.html">(Triton docs)</a></blockquote>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+CUDA = write code for <b>one thread</b> that grabs <b>one element</b> via <code>blockIdx</code>+<code>threadIdx</code>.
+Triton = write code for <b>one program instance</b> that grabs a <b>whole tile</b> via <code>tl.program_id</code>;
+there is <b>no <code>threadIdx</code></b>, and the compiler manages the threads.
+</div>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="../reference/cuda-triton-glossary.html">Reference: CUDA ↔ Triton glossary & cheat-sheet</a> (keep this open)</li>
+  <li>Lesson 2 (coming): <em>tiles &amp; masks</em> — why a program owns a fixed-size block and how the mask protects the edges.</li>
+</ul>
+
+<h2>Primary source</h2>
+<p>Read <a href="https://openai.com/index/triton/">Introducing Triton (OpenAI)</a> — ~10 min.
+Stop at the line about "programs — rather than threads — are blocked"; that one sentence is this whole lesson.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. Confused about why a "program"
+becomes "threads" on the GPU, or what a tile really is? Ask, and I'll build the next lesson around it.</p>
+
+<p class="foot">Lesson 1 · workspace: learning-ai-inference · mission: understand the GPU execution model via Triton</p>
+</body>
+</html>

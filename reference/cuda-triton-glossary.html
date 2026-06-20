@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — CUDA ↔ Triton glossary & cheat-sheet</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  /* print-friendly: tight, single-color, fits a page */
+  @media print { body { margin:0; max-width:none; background:#fff; } a { color:#000; text-decoration:none; } }
+  body { max-width:46rem; }
+  h2 { margin-top:1.6rem; }
+</style>
+</head>
+<body>
+
+<h1>CUDA ↔ Triton cheat-sheet</h1>
+<p class="sub">Reference · the execution-model vocabulary, compressed · keep open while reading lessons</p>
+
+<h2>The one-line model</h2>
+<div class="defense">
+<b>CUDA</b>: you write code for <b>one thread</b> → one scalar.&nbsp;
+<b>Triton</b>: you write code for <b>one program instance</b> → one tile (block of data).
+The compiler turns your tile into threads.
+</div>
+
+<h2>Glossary (adhere to this in every lesson)</h2>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td><b>Grid</b></td><td>All the work for a single kernel launch; a (multi-dim) array of blocks/programs.</td></tr>
+<tr><td><b>Block</b> (CUDA)</td><td>A group of threads sharing fast on-chip memory; can synchronize. The unit Triton programs at.</td></tr>
+<tr><td><b>Thread</b> (CUDA)</td><td>The smallest execution unit; processes one scalar. <b>Invisible in Triton source.</b></td></tr>
+<tr><td><b>Program instance</b> (Triton)</td><td>One run of your <code>@triton.jit</code> kernel. Occupies the role of a CUDA <em>block</em>, but its body operates on a whole tile.</td></tr>
+<tr><td><b>Tile</b> (Triton)</td><td>A small fixed-size array (dims are powers of two) that one program loads, computes, and stores as a unit.</td></tr>
+<tr><td><b>SPMD</b></td><td>Single Program, Multiple Data. Both models are SPMD — Triton just blocks <em>programs</em> instead of <em>threads</em>.</td></tr>
+<tr><td><b>Mask</b></td><td>Boolean tile that disables out-of-bounds lanes so the last (ragged) block is safe.</td></tr>
+</table>
+
+<h2>Symbol map</h2>
+<table>
+<tr><th>CUDA</th><th>Triton</th><th>Question it answers</th></tr>
+<tr><td><code>blockIdx.x</code></td><td><code>tl.program_id(axis=0)</code></td><td>Which block/program am I?</td></tr>
+<tr><td><code>blockIdx.{y,z}</code></td><td><code>tl.program_id(1)</code>, <code>tl.program_id(2)</code></td><td>2-D / 3-D launch grids.</td></tr>
+<tr><td><code>gridDim.x</code></td><td>launch <code>grid</code> tuple; <code>tl.num_programs(0)</code></td><td>How many programs total?</td></tr>
+<tr><td><code>blockDim.x</code></td><td><code>BLOCK_SIZE: tl.constexpr</code></td><td>How many <em>elements</em> per program (you choose / autotune).</td></tr>
+<tr><td><code>threadIdx.x</code></td><td class="gone">— none —</td><td>(Compiler-owned. You never write it.)</td></tr>
+<tr><td><code>__shared__</code> / <code>__syncthreads()</code></td><td class="gone">— none —</td><td>(Compiler allocates & synchronizes shared memory.)</td></tr>
+</table>
+
+<h2>What the Triton compiler does for you</h2>
+<p>Things you'd hand-tune in CUDA that simply don't appear in Triton code:</p>
+<ul>
+  <li>memory coalescing</li>
+  <li>thread swizzling</li>
+  <li>shared-memory allocation, synchronization & bank-conflict avoidance</li>
+  <li>automatic vectorization &amp; pre-fetching</li>
+  <li>tensor-core-aware instruction selection</li>
+  <li>asynchronous copy scheduling</li>
+</ul>
+<p class="srcline"><a class="gh" href="https://triton-lang.org/main/programming-guide/chapter-1/introduction.html">Triton docs · Introduction↗</a></p>
+
+<h2>The kernel skeleton (memorize the shape)</h2>
+<pre><code>@triton.jit
+def kernel(x_ptr, ..., n_elements, BLOCK_SIZE: tl.constexpr):
+    pid     = tl.program_id(axis=0)             # 1. who am I
+    offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)  # 2. my tile of indices
+    mask    = offsets &lt; n_elements              # 3. guard the edge
+    x       = tl.load(x_ptr + offsets, mask=mask)         # 4. load tile
+    # ... compute over the whole tile ...                # 5. tensor math
+    tl.store(out_ptr + offsets, result, mask=mask)       # 6. store tile
+
+# launch
+grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
+kernel[grid](x, ..., n_elements, BLOCK_SIZE=1024)</code></pre>
+<p>Six beats: <b>who am I → my indices → mask → load → compute → store</b>.</p>
+
+<p class="ask">💬 Ask your teacher to expand any row of these tables into its own lesson.</p>
+
+<p class="foot">Reference · learning-ai-inference · sources: openai.com/index/triton, triton-lang.org</p>
+</body>
+</html>
