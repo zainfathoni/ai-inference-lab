@@ -11,6 +11,12 @@
 <h1>Triton deletes a level</h1>
 <p class="sub">Lesson 1 · mission: understand the GPU execution model · the diagram, re-drawn for Triton</p>
 
+<figure>
+  <img src="../assets/cuda-execution-model.png"
+       alt="The CUDA execution model: a GRID of blocks (gridDim.x/y/z) with one block highlighted at (1,0); a BLOCK of threads (blockDim.x/y/z) with one thread highlighted at (2,3); and a single THREAD. blockIdx locates the block in the grid, threadIdx the thread in the block.">
+  <figcaption>The CUDA execution model (Netra Runtime). Triton keeps the GRID and BLOCK; it removes the THREAD from your code.</figcaption>
+</figure>
+
 <p>The diagram you shared is the <b>CUDA</b> execution model: three nested levels —
 a <span class="lvl grid">GRID</span> of <span class="lvl block">BLOCKS</span>, each block a 3-D set of
 <span class="lvl thread">THREADS</span>. CUDA asks you to write code from the point of view of

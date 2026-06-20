@@ -49,6 +49,13 @@ a { color:var(--accent); }
 
 /* --- workspace-specific reusable components --- */
 
+/* Figures: responsive, never overflow the page on mobile */
+figure { margin:1.4rem 0; }
+figure img { display:block; max-width:100%; height:auto; border:1px solid var(--rule);
+             border-radius:6px; background:#fff; }
+figcaption { font-size:.8rem; color:var(--muted); font-style:italic; margin-top:.4rem;
+             text-align:center; }
+
 /* Side-by-side CUDA vs Triton mental-model cards */
 .compare { display:flex; gap:1rem; flex-wrap:wrap; margin:1.4rem 0; }
 .compare > div { flex:1 1 14rem; border:1px solid var(--rule); border-radius:8px;

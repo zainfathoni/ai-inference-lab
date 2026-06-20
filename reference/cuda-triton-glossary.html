@@ -24,6 +24,12 @@
 The compiler turns your tile into threads.
 </div>
 
+<figure>
+  <img src="../assets/cuda-execution-model.png"
+       alt="CUDA execution model diagram: GRID of blocks, BLOCK of threads, and a single THREAD. Triton programs at the BLOCK level and removes the THREAD level from source code.">
+  <figcaption>The CUDA execution model. Triton programs at the BLOCK level; the THREAD level is compiler-managed.</figcaption>
+</figure>
+
 <h2>Glossary (adhere to this in every lesson)</h2>
 <table>
 <tr><th>Term</th><th>Meaning</th></tr>
