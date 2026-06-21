@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+echo "pre-commit: regenerating Markdown HTML pages"
+node scripts/render-markdown.mjs
+
+git add \
+  MISSION/index.html \
+  README/index.html \
+  RESOURCES/index.html \
+  NOTES/index.html

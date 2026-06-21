@@ -39,6 +39,9 @@
 <tr><td><code>NOTES.md</code></td><td><code>NOTES/</code></td></tr></tbody></table>
 <p>Regenerate rendered pages after editing top-level Markdown:</p>
 <pre><code class="language-bash">node scripts/render-markdown.mjs</code></pre>
+<p>To make that automatic before every local commit, enable the committed Git hook once per clone:</p>
+<pre><code class="language-bash">git config core.hooksPath scripts/hooks</code></pre>
+<p>The hook regenerates the Markdown HTML pages and stages the generated files. This keeps the site synced without using GitHub Actions quota.</p>
 <p>The renderer is intentionally local and dependency-free: no CDN, no visitor-side Markdown library, and no runtime JavaScript for Markdown rendering. Generated HTML files include a comment warning not to edit them directly.</p>
 <h2>Start here</h2>
 <ul><li><a href="MISSION/">Mission — AI inference lab</a> (<a href="MISSION.md">raw Markdown</a>)</li><li><a href="lessons/0001-thread-block-grid-in-triton.html">Lesson 1 — Triton deletes a level</a></li><li><a href="reference/cuda-triton-glossary.html">Reference — CUDA ↔ Triton cheat-sheet</a></li></ul>

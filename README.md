@@ -67,6 +67,16 @@ Regenerate rendered pages after editing top-level Markdown:
 node scripts/render-markdown.mjs
 ```
 
+To make that automatic before every local commit, enable the committed Git hook
+once per clone:
+
+```bash
+git config core.hooksPath scripts/hooks
+```
+
+The hook regenerates the Markdown HTML pages and stages the generated files.
+This keeps the site synced without using GitHub Actions quota.
+
 The renderer is intentionally local and dependency-free: no CDN, no visitor-side
 Markdown library, and no runtime JavaScript for Markdown rendering. Generated
 HTML files include a comment warning not to edit them directly.
