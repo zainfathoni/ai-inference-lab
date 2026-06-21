@@ -86,5 +86,6 @@ HTML files include a comment warning not to edit them directly.
 ## Start here
 
 - [Mission — AI inference lab](MISSION/) ([raw Markdown](MISSION.md))
+- [Lesson 0 — What inference actually is (for a fullstack dev)](lessons/0000-what-inference-actually-is.html)
 - [Lesson 1 — Triton deletes a level](lessons/0001-thread-block-grid-in-triton.html)
 - [Reference — CUDA ↔ Triton cheat-sheet](reference/cuda-triton-glossary.html)

@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 0 — What inference actually is (for a fullstack dev)</title>
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+
+<h1>You're not learning "AI". You're learning a hot path.</h1>
+<p class="sub">Lesson 0 · the orientation the webinar slides would have given you · for a fullstack dev who last touched AI 12 years ago</p>
+
+<div class="ask">
+You walked away from the webinar with a <b>book reference</b> and <b>one screenshot</b> (the CUDA
+execution-model diagram in <a href="0001-thread-block-grid-in-triton.html">Lesson 1</a>). This lesson rebuilds the
+missing frame around that screenshot — so Lesson 1 lands as "obvious next step", not "deep end".
+</div>
+
+<h2>The one split that dissolves your fear</h2>
+<p>The word "AI" hides two almost-unrelated jobs. The thing you're rusty on is the <em>left</em> column.
+Your mission lives entirely in the <em>right</em> column.</p>
+
+<div class="compare">
+  <div class="c-cuda">
+    <h4>TRAINING — what you studied in college</h4>
+    <ul>
+      <li><b>Goal:</b> compute the model's weights from data.</li>
+      <li>Backprop, gradients, loss functions, optimizers.</li>
+      <li>The math-heavy, research-y part.</li>
+      <li>Done <b>once</b>, by someone else, on a big cluster.</li>
+      <li><span class="gone">You can ignore this for a long time.</span></li>
+    </ul>
+  </div>
+  <div class="c-triton">
+    <h4>INFERENCE — your turf</h4>
+    <ul>
+      <li><b>Goal:</b> run the finished model <span class="keep">fast and correct</span>.</li>
+      <li>Memory layout, kernels, bandwidth, latency, cost.</li>
+      <li>The systems / performance part.</li>
+      <li>Done <b>billions of times</b>, in production, on your watch.</li>
+      <li><span class="keep">This is where a fullstack dev has an edge.</span></li>
+    </ul>
+  </div>
+</div>
+
+<p>"Inference runtime engineering" — the phrase in your <a href="../MISSION.md">mission</a> — is the
+<b>right column</b>. None of it requires you to remember how a model <em>learns</em>. It only requires
+you to make a fixed pile of arithmetic go fast on a GPU. That's an engineering problem, and you already
+do engineering problems.</p>
+
+<h2>What a model <em>is</em>, at inference time</h2>
+<p>Strip away the mystique and a model running inference is something you already understand: a
+<b>pure function</b> over a giant constant.</p>
+
+<pre><code>output = model(input)        # that's the whole shape of it
+#         ^^^^^ a fixed blob of numbers (the "weights"), loaded once
+#               + a fixed sequence of array operations</code></pre>
+
+<p>Four facts are all the "AI" you need to start. Each has a web-dev analogy:</p>
+
+<table>
+<tr><th>Inference fact</th><th>What it means</th><th>The analogy you already have</th></tr>
+<tr>
+  <td><b>Weights</b></td>
+  <td>A huge, read-only blob of numbers produced by training.</td>
+  <td>A giant config / constants file you load at boot and never mutate.</td>
+</tr>
+<tr>
+  <td><b>Tensors</b></td>
+  <td>Multi-dimensional arrays. A vector, a matrix, a stack of matrices.</td>
+  <td>Typed arrays / nested arrays. Nothing more exotic.</td>
+</tr>
+<tr>
+  <td><b>The forward pass</b></td>
+  <td>Push the input through a fixed sequence of array ops to get output.</td>
+  <td>A deterministic pipeline: same input → same output, no side effects.</td>
+</tr>
+<tr>
+  <td><b>A few hot ops</b></td>
+  <td>Elementwise (add/mul), <b>matmul</b>, softmax/normalization, attention. These eat ~all the time.</td>
+  <td>The hot loop in a backend service — the 5% of code that's 95% of the cost.</td>
+</tr>
+</table>
+
+<p>Your whole job, reduced to one sentence: <b>make those hot ops run fast and correctly on the
+hardware.</b> That is what a Triton kernel is. That is what Netra-style puzzles test. That is the
+mission.</p>
+
+<h2>Why your fullstack instincts are the right toolkit</h2>
+<p>The skills that make inference fast are skills you've been building for years — they just wear
+GPU clothes here:</p>
+
+<table>
+<tr><th>You already reason about…</th><th>…which in inference becomes</th></tr>
+<tr><td>Cache hits vs misses, hot/cold data</td><td>GPU memory hierarchy, coalesced access, shared memory</td></tr>
+<tr><td>"Is this CPU-bound or I/O-bound?"</td><td>"Is this kernel compute-bound or memory-bandwidth-bound?"</td></tr>
+<tr><td>Batching DB queries to amortize round-trips</td><td>Batching tokens/requests to amortize weight loads</td></tr>
+<tr><td>Concurrency, parallel workers, race conditions</td><td>Threads, blocks, grids, synchronization (Lesson 1)</td></tr>
+<tr><td>Profiling before optimizing</td><td>Benchmarking a kernel before claiming it's faster</td></tr>
+</table>
+
+<p>The ML researcher who trained the model is often <em>weaker</em> at this table than you are. That's
+the opening you're walking through.</p>
+
+<blockquote>So the honest risk isn't "too advanced." It's over-preparing on training-era theory you don't
+need yet, and stalling. The cure is to start, and pull each ML concept in only when a lesson needs it.</blockquote>
+
+<h2>What you do <b>not</b> need yet</h2>
+<p>Permission to skip, in writing: backpropagation, gradient descent, loss functions, optimizers,
+how transformers were invented, training dynamics, most of your college AI notes. When a concept like
+<b>attention</b> or <b>quantization</b> becomes load-bearing for a kernel, that lesson will hand you
+exactly the slice you need — just-in-time, not up-front.</p>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+"AI" = <b>training</b> (compute the weights — not my job yet) + <b>inference</b> (run the finished
+weights fast — <b>my job</b>). At inference, a model is a <b>pure function</b>: a fixed blob of
+<code>weights</code> + a fixed sequence of array ops over <b>tensors</b>. A handful of hot ops
+(<code>matmul</code>, attention, softmax) eat all the time, and my job is making them fast and correct
+on the GPU. My fullstack instincts about caches, bottlenecks, and profiling transfer directly.
+</div>
+
+<h2>Where this hands off to Lesson 1</h2>
+<p>You now know <em>what</em> you're making fast (those hot ops over tensors). <a href="0001-thread-block-grid-in-triton.html">Lesson 1</a>
+starts on the <em>how</em>: the GPU's execution model — the exact diagram from your screenshot — and how
+Triton lets you write one program over a whole tile instead of fiddling with individual threads.
+Go there next.</p>
+
+<h2>Primary source</h2>
+<p>Read <a href="https://www.baseten.co/inference-engineering/">Baseten — Inference Engineering</a> (the
+overview/map, ~10 min). Treat it as the table of contents for the right-hand column above: models,
+hardware, software, optimization, production. Don't summarize it — just let it confirm the shape of the
+field. It's the same "map, not main output" role noted in your <a href="../RESOURCES.md">RESOURCES.md</a>.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. If any analogy in the tables
+above feels too loose, or you want the one-screenshot webinar context reconstructed further, ask and
+I'll tighten it before you move to Lesson 1.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="0001-thread-block-grid-in-triton.html">Lesson 1 — Thread → Block → Grid, the Triton way</a> (your screenshot, explained)</li>
+  <li><a href="../reference/cuda-triton-glossary.html">Reference: CUDA ↔ Triton glossary &amp; cheat-sheet</a></li>
+</ul>
+
+<p class="foot">Lesson 0 · Zain's AI Inference Lab · orientation for a fullstack dev · the missing webinar frame</p>
+</body>
+</html>
