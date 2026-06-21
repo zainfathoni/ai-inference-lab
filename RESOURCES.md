@@ -65,9 +65,13 @@ benchmarks, and real codebases over generic roadmaps.
 ## Runtime codebases to study
 
 - **[NetraRuntime/sam3.c](https://github.com/NetraRuntime/sam3.c)**
-  - A pure-C SAM3 inference runtime with custom tensor ops, CPU/Metal backends,
+  - To study and personally verify. External-codebase summary says it is a
+    pure-C SAM3 inference runtime with custom tensor ops, CPU/Metal backends,
     mmap weight loading, quantization support, feature caching, CLI/bindings,
-    and benchmarks. Study as an example of model-specific runtime engineering.
+    and benchmarks.
+  - Use it as a model-specific runtime engineering case study only after scoping
+    one subsystem at a time, such as weight loading, feature caching, or a single
+    backend kernel family.
 
 ## Background on the CUDA model (the diagram)
 

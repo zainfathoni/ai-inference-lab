@@ -6,6 +6,16 @@ const pages = [
   { source: 'README.md', outDir: 'README', title: 'README' },
   { source: 'RESOURCES.md', outDir: 'RESOURCES', title: 'Resources' },
   { source: 'NOTES.md', outDir: 'NOTES', title: 'Notes' },
+  {
+    source: 'experiments/0001-vector-add-on-t4/README.md',
+    outDir: 'experiments/0001-vector-add-on-t4',
+    title: 'Experiment 0001 — Triton vector add on a free T4',
+  },
+  {
+    source: 'records/0001-triton-program-instance.md',
+    outDir: 'records/0001-triton-program-instance',
+    title: 'Record 0001 — Triton program instance recall',
+  },
 ]
 
 function escapeHtml(value) {
@@ -150,13 +160,15 @@ function renderMarkdown(markdown) {
   return blocks.join('\n')
 }
 
-function pageTemplate({ title, source, body }) {
+function pageTemplate({ title, source, outDir, body }) {
+  const baseHref = '../'.repeat(outDir.split('/').length)
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<base href="../">
+<base href="${baseHref}">
 <title>${escapeHtml(title)} · Zain's AI Inference Lab</title>
 <link rel="stylesheet" href="assets/lesson.css">
 <link rel="stylesheet" href="assets/markdown-page.css">

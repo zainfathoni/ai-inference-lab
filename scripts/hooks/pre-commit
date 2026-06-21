@@ -8,4 +8,6 @@ git add \
   MISSION/index.html \
   README/index.html \
   RESOURCES/index.html \
-  NOTES/index.html
+  NOTES/index.html \
+  experiments/0001-vector-add-on-t4/index.html \
+  records/0001-triton-program-instance/index.html

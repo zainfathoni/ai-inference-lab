@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="../../">
+<title>Experiment 0001 — Triton vector add on a free T4 · Zain's AI Inference Lab</title>
+<link rel="stylesheet" href="assets/lesson.css">
+<link rel="stylesheet" href="assets/markdown-page.css">
+</head>
+<body>
+<!-- Generated from ../experiments/0001-vector-add-on-t4/README.md by scripts/render-markdown.mjs. Do not edit directly. -->
+<nav class="topnav"><a href="./">← Zain's AI Inference Lab</a><a class="raw-link" href="experiments/0001-vector-add-on-t4/README.md">raw Markdown</a></nav>
+<main class="markdown-page markdown-body">
+<h1>Experiment 0001 — Triton vector add on a free T4</h1>
+<p><strong>Status:</strong> prepared, not yet run on T4.</p>
+<h2>Purpose</h2>
+<p>Close the first real lab loop after Lesson 0001:</p>
+<ol><li>Run a simple Triton kernel on an NVIDIA GPU.</li><li>Check correctness against PyTorch.</li><li>Capture a small benchmark against <code>torch</code> addition.</li><li>Record what broke or surprised me.</li></ol>
+<p>This is not meant to prove performance skill yet. It proves the workflow: local notes → free GPU run → captured output → learning record.</p>
+<h2>Target environment</h2>
+<ul><li>Colab or Kaggle notebook</li><li>NVIDIA T4 preferred, but any CUDA GPU is acceptable for the first loop</li><li>Python 3</li><li>PyTorch with CUDA</li><li>Triton</li></ul>
+<h2>How to run</h2>
+<p>In Colab/Kaggle, upload or paste <code>vector<em>add</em>benchmark.py</code>, then run:</p>
+<pre><code class="language-bash">python vector_add_benchmark.py</code></pre>
+<p>If Triton is missing:</p>
+<pre><code class="language-bash">pip install triton
+python vector_add_benchmark.py</code></pre>
+<h2>What to capture after running</h2>
+<p>Paste the terminal/notebook output below.</p>
+<pre><code class="language-text">TODO: paste actual output here after T4 run.</code></pre>
+<h2>Notes after run</h2>
+<ul><li>TODO: What GPU did I get?</li><li>TODO: Did Triton import cleanly?</li><li>TODO: Did correctness pass?</li><li>TODO: Was Triton faster or slower than <code>torch</code> for this tiny benchmark?</li><li>TODO: What did I misunderstand from Lesson 0001?</li></ul>
+<h2>Link to learning record</h2>
+<ul><li><a href="../../records/0001-triton-program-instance/">Record 0001 — Triton program instance recall</a></li></ul>
+</main>
+</body>
+</html>

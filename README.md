@@ -23,7 +23,7 @@ GitHub Pages, or a custom domain, with no build step.
 | `portfolio/` | Later: selected polished proof-of-work artifacts promoted from records/experiments. |
 | `reference/` | Compressed cheat-sheets, glossaries, and reusable mental models. |
 | `assets/` | Shared, reusable components (e.g. `lesson.css`). |
-| `scripts/render-markdown.mjs` | Generates readable HTML pages from top-level Markdown files. |
+| `scripts/render-markdown.mjs` | Generates readable HTML pages from selected Markdown files. |
 | `RESOURCES.md` | High-trust sources and how they fit the plan. |
 | `NOTES.md` | Working notes, decisions, and learning preferences. |
 
@@ -60,8 +60,10 @@ directory URLs:
 | `README.md` | `README/` |
 | `RESOURCES.md` | `RESOURCES/` |
 | `NOTES.md` | `NOTES/` |
+| `experiments/0001-vector-add-on-t4/README.md` | `experiments/0001-vector-add-on-t4/` |
+| `records/0001-triton-program-instance.md` | `records/0001-triton-program-instance/` |
 
-Regenerate rendered pages after editing top-level Markdown:
+Regenerate rendered pages after editing selected Markdown files:
 
 ```bash
 node scripts/render-markdown.mjs

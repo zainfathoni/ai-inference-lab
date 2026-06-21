@@ -24,7 +24,7 @@
 <tr><td><code>portfolio/</code></td><td>Later: selected polished proof-of-work artifacts promoted from records/experiments.</td></tr>
 <tr><td><code>reference/</code></td><td>Compressed cheat-sheets, glossaries, and reusable mental models.</td></tr>
 <tr><td><code>assets/</code></td><td>Shared, reusable components (e.g. <code>lesson.css</code>).</td></tr>
-<tr><td><code>scripts/render-markdown.mjs</code></td><td>Generates readable HTML pages from top-level Markdown files.</td></tr>
+<tr><td><code>scripts/render-markdown.mjs</code></td><td>Generates readable HTML pages from selected Markdown files.</td></tr>
 <tr><td><code>RESOURCES.md</code></td><td>High-trust sources and how they fit the plan.</td></tr>
 <tr><td><code>NOTES.md</code></td><td>Working notes, decisions, and learning preferences.</td></tr></tbody></table>
 <h2>Artifact types</h2>
@@ -36,8 +36,10 @@
 <table><thead><tr><th>Raw Markdown</th><th>Rendered page</th></tr></thead><tbody><tr><td><code>MISSION.md</code></td><td><code>MISSION/</code></td></tr>
 <tr><td><code>README.md</code></td><td><code>README/</code></td></tr>
 <tr><td><code>RESOURCES.md</code></td><td><code>RESOURCES/</code></td></tr>
-<tr><td><code>NOTES.md</code></td><td><code>NOTES/</code></td></tr></tbody></table>
-<p>Regenerate rendered pages after editing top-level Markdown:</p>
+<tr><td><code>NOTES.md</code></td><td><code>NOTES/</code></td></tr>
+<tr><td><code>experiments/0001-vector-add-on-t4/README.md</code></td><td><code>experiments/0001-vector-add-on-t4/</code></td></tr>
+<tr><td><code>records/0001-triton-program-instance.md</code></td><td><code>records/0001-triton-program-instance/</code></td></tr></tbody></table>
+<p>Regenerate rendered pages after editing selected Markdown files:</p>
 <pre><code class="language-bash">node scripts/render-markdown.mjs</code></pre>
 <p>To make that automatic before every local commit, enable the committed Git hook once per clone:</p>
 <pre><code class="language-bash">git config core.hooksPath scripts/hooks</code></pre>
