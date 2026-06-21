@@ -1,8 +1,9 @@
 # Record 0001 — Triton program instance recall
 
-**Status:** recognition quiz passed 4/4 (2026-06-21). Cold free-recall attempted
-2026-06-21 — Q2/Q3/Q4 solid, Q1 and Q5 thin (see Correction). Still open: re-recall
-of Q1/Q5 and Experiment 0001 output.
+**Status:** ✅ free-recall milestone cleared (2026-06-21). Recognition quiz 4/4
+and cold free-recall both passed — all five concepts explained without notes
+(Q1 and Q5 re-recalled clean after first-pass gaps). Remaining open: Experiment
+0001 output (run on real hardware).
 
 ## Prompt
 
@@ -41,6 +42,17 @@ Without looking at Lesson 0001, explain:
   grid, tile indexing, correctness, and benchmarking.
 
 Next pass: re-recall Q1 and Q5 only.
+
+**Re-recall (2026-06-21):** both clean.
+
+- Q1: "an instance of a kernel that runs once per block and processes an entire
+  tile of elements at a time." — full definition, the "once per block" clause now
+  present.
+- Q5: hides thread-level optimization; programmer owns block size, launch grid,
+  correctness, and benchmarks. (Could also name tile indexing/algorithm as
+  programmer-owned — minor.)
+
+Milestone cleared: execution model explained cold, no notes.
 
 ## Quiz log
 
