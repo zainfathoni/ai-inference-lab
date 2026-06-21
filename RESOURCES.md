@@ -48,9 +48,19 @@ benchmarks, and real codebases over generic roadmaps.
 
 ## GPU fundamentals
 
-- **Programming Massively Parallel Processors**
-  - Deep CUDA/GPU fundamentals. Use selectively to answer concrete questions
-    raised by Triton experiments; avoid reading cover-to-cover before coding.
+- **[Programming Massively Parallel Processors](https://www.cse.iitd.ac.in/~rijurekha/col851/necessary_reading/cudabook.pdf)**
+  - Deep CUDA/GPU fundamentals: execution model, memory hierarchy, tiling,
+    synchronization, performance reasoning, and parallel patterns.
+  - How it comes into play: use it as the *why underneath Triton*. Triton hides
+    thread-level CUDA details, but Netra-style kernel work still requires the
+    mental model: coalesced memory access, occupancy, cache behavior, shared
+    memory, arithmetic intensity, and why a kernel is memory-bound or
+    compute-bound.
+  - Read selectively after experiments raise questions. Example: run Triton
+    vector add, then read about memory bandwidth/coalescing; attempt matmul,
+    then read tiling/shared-memory chapters; work on dequantization, then read
+    memory hierarchy and data movement. Avoid reading cover-to-cover before
+    coding.
 
 ## Runtime codebases to study
 
