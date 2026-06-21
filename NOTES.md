@@ -65,3 +65,9 @@
   — he only got the book reference + the one CUDA-execution-model screenshot
   from last night's webinar, not the slides. Draws the training-vs-inference
   line and maps fullstack instincts → inference. Next: Lesson 1.
+- 2026-06-21: Quizzed Lesson 0001 — 4/4 multiple-choice. Clean on all core
+  execution-model concepts (program instance = per-block tile; program_id ≈
+  blockIdx.x; mask guards ragged last block; compiler owns thread-level
+  mechanics, programmer owns BLOCK_SIZE/grid/correctness/benchmarks). Logged in
+  records/0001. Recognition-level only — milestone still needs cold free-recall
+  and Experiment 0001. Lesson 2 (tiles & masks) is the natural next teach.
