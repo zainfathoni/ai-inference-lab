@@ -65,3 +65,13 @@
   — he only got the book reference + the one CUDA-execution-model screenshot
   from last night's webinar, not the slides. Draws the training-vs-inference
   line and maps fullstack instincts → inference. Next: Lesson 1.
+- 2026-06-21: Quizzed Lesson 0001 — 4/4 multiple-choice. Clean on all core
+  execution-model concepts (program instance = per-block tile; program_id ≈
+  blockIdx.x; mask guards ragged last block; compiler owns thread-level
+  mechanics, programmer owns BLOCK_SIZE/grid/correctness/benchmarks). Logged in
+  records/0001. Recognition-level only — milestone still needs cold free-recall
+  and Experiment 0001. Lesson 2 (tiles & masks) is the natural next teach.
+- 2026-06-21: Cold free-recall on 0001 — Q2/Q3/Q4 clean first try, Q1 (definition)
+  and Q5 (programmer-responsibility half) thin, then re-recalled both clean.
+  Free-recall milestone CLEARED: execution model explained without notes. Only
+  open evidence for 0001 is Experiment 0001 (run on real T4). Logged in records/0001.
