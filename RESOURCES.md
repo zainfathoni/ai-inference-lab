@@ -1,7 +1,24 @@
 # Resources
 
-High-trust sources for grounding lessons. Triton is young and fast-moving, so
-prefer the official docs and the OpenAI announcement over blog posts.
+High-trust sources for grounding the AI inference lab. Triton is young and
+fast-moving, so prefer official docs, primary source material, reproducible
+benchmarks, and real codebases over generic roadmaps.
+
+## How to use these resources
+
+- Use Netra-style tasks as the short-term benchmark.
+- Use Triton/CUDA material for hands-on kernel skill.
+- Use Baseten's inference material as the high-level map.
+- Use real runtimes like `sam3.c`, llama.cpp, vLLM, and SGLang as architecture
+  studies, but scope each study to one subsystem at a time.
+- Avoid roadmap-driven wandering unless it directly supports an experiment.
+
+## Current target
+
+- **[Netra Runtime — AI Engineer Interview Puzzles](https://hackmd.io/@netraruntime/r1M7l9r0Wx)**
+  - Practical benchmark for Triton kernels, quantization/dequantization,
+    QLoRA/FSDP2, `torch.compile`, upstream PRs, and performance explanations.
+  - Use as a forcing function, not necessarily as the final employer target.
 
 ## Primary / canonical
 
@@ -18,6 +35,29 @@ prefer the official docs and the OpenAI announcement over blog posts.
 - **[Triton tutorial — Vector Addition](https://triton-lang.org/main/getting-started/tutorials/01-vector-add.html)** — triton-lang.org
   - Trust: ★★★★★ (official). The canonical first kernel. Source of the
     annotated `add_kernel` in Lesson 0001.
+
+## Inference engineering map
+
+- **[Inference Engineering](https://www.baseten.co/inference-engineering/)** — Baseten
+  - Use as a stack map: models, hardware, software, optimization techniques,
+    modalities, and production. Do not publish standalone chapter summaries;
+    connect reading to experiments.
+- **[inferenceengineering.tech](https://inferenceengineering.tech/)**
+  - Interactive companion/course. Useful for reinforcement, but lower priority
+    than implementing and benchmarking.
+
+## GPU fundamentals
+
+- **Programming Massively Parallel Processors**
+  - Deep CUDA/GPU fundamentals. Use selectively to answer concrete questions
+    raised by Triton experiments; avoid reading cover-to-cover before coding.
+
+## Runtime codebases to study
+
+- **[NetraRuntime/sam3.c](https://github.com/NetraRuntime/sam3.c)**
+  - A pure-C SAM3 inference runtime with custom tensor ops, CPU/Metal backends,
+    mmap weight loading, quantization support, feature caching, CLI/bindings,
+    and benchmarks. Study as an example of model-specific runtime engineering.
 
 ## Background on the CUDA model (the diagram)
 

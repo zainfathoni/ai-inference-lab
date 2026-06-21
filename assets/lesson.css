@@ -1,7 +1,7 @@
 /*
-  Shared stylesheet for the learning-ai-inference teach workspace.
+  Shared stylesheet for Zain's AI Inference Lab.
   Seeded from ~/.claude/skills/teach/lesson-template.html (the accessible baseline).
-  Every lesson links this so the course looks like one consistent whole.
+  Every lesson links this so the lab looks like one consistent whole.
   Portable: works over file://, Tailscale, and static hosting. No build step.
 */
 :root { --ink:#1a1a1a; --muted:#6b6b6b; --rule:#e0ddd6; --accent:#2e5c7a;

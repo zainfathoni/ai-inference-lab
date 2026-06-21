@@ -4,11 +4,18 @@
 
 ## Why this topic
 
-Build solid mental models of **how GPUs execute work for AI inference**, using
-**Triton** as the lens. The learner is not (yet) trying to ship hand-tuned
-kernels — the goal is *understanding the execution model* well enough to reason
-about, and eventually read, the kernels that power modern inference stacks
-(vLLM, FlashAttention, fused ops).
+Build public proof-of-work toward **AI inference runtime engineering**: the part
+of AI systems where model architecture, kernels, memory layout, runtimes,
+serving constraints, and production cost meet.
+
+The short-term forcing function is Netra Runtime-style inference engineering
+puzzles. They are useful even if Netra is not the final employer because they
+make progress measurable: kernels must be correct, benchmarks must beat real
+baselines, and implementation choices must be defensible.
+
+The long-term career direction is **AI runtime engineer**: understand how models
+move from PyTorch code to fast, observable, deployable inference systems. Kernel
+work is the proof mechanism; production inference is the monetization path.
 
 ## Starting point (2026-06-20)
 
@@ -18,22 +25,39 @@ about, and eventually read, the kernels that power modern inference stacks
 - Comes in via Triton, not CUDA, so the natural framing is: *here is the
   three-level hardware model, and here is how Triton deliberately hides one
   level so you program at the block ("program") level.*
+- Current hardware is Apple Silicon, not a local NVIDIA workstation. The lab
+  workflow is local development and correctness on Mac, free Kaggle/Colab GPU
+  validation first, and paid GPU bursts only when there is a specific benchmark
+  or blocker worth the spend.
 
 ## What "success" looks like for now
 
+- Month 1: ship the lab framing, run the first Triton-on-T4 experiment, and
+  publish the hardware-constrained workflow.
+- 8–12 weeks: produce a credible Netra-style submission attempt, especially
+  around Triton, quantization/dequantization, and benchmark methodology.
+- Long term: build a portfolio that shows recent systems depth across kernels,
+  model execution/runtime internals, and production inference tradeoffs.
+
+The first technical milestone remains foundational:
+
 - Can explain, without notes, what a Triton **program instance** is and how it
   maps onto the CUDA grid/block/thread picture.
-- Can point at any line of a simple Triton kernel (vector add) and say which
-  part of the execution model it corresponds to.
-- Knows which concurrency concerns Triton automates away (and therefore which
-  CUDA worries simply don't appear in Triton code).
+- Can point at any line of a simple Triton kernel and say which part of the
+  execution model it corresponds to.
+- Knows which concurrency concerns Triton automates away and which performance
+  questions remain the programmer's responsibility.
 
 ## Notes on scope
 
 Grounded in AI **inference**: prefer examples and motivations that show up in
-real inference kernels (elementwise/fused ops first, matmul/attention later).
-Theory is in service of reading and reasoning, not (yet) of writing production
-kernels.
+real inference kernels and runtimes. Start with elementwise/fused ops and
+Triton fundamentals; move toward quantization, dequantization, matmul,
+attention, KV cache, model loading, and serving tradeoffs.
+
+Baseten's _Inference Engineering_ book/course is used as a map, not as the main
+output. Public notes should connect reading to an experiment, benchmark,
+implementation, or Netra task — no standalone book reports.
 
 _Mission may evolve as skills grow — update this file and add a learning record
 when it does._

@@ -1,23 +1,30 @@
-# learning-ai-inference
+# Zain's AI Inference Lab
 
-A personal learning workspace for building solid mental models of **how GPUs
-execute work for AI inference**, using **Triton** as the lens.
+Zain Fathoni's public lab notebook for learning **AI inference runtime
+engineering** in public.
 
-Lessons are self-contained, accessible HTML — readable over `file://`, static
-hosting, or Tailscale, with no build step.
+The short-term benchmark is readiness for Netra Runtime-style inference puzzles:
+Triton kernels, quantization/dequantization, `torch.compile`, QLoRA/FSDP2, and
+benchmark-driven explanations. The longer-term direction is AI runtime
+engineering: understanding how models move from PyTorch code to fast,
+observable, deployable inference systems.
+
+The site is intentionally simple: self-contained HTML, readable over `file://`,
+GitHub Pages, or a custom domain, with no build step.
 
 ## Layout
 
 | Path | What it holds |
 | ---- | ------------- |
-| `MISSION.md` | Why I'm learning this — grounds every lesson. |
-| `lessons/` | Tightly-scoped HTML lessons (`0001-…`, incrementing). |
-| `reference/` | Compressed cheat-sheets & glossaries to return to. |
+| `MISSION.md` | The learning and career strategy behind the lab. |
+| `lessons/` | Tightly-scoped HTML lessons and experiment writeups (`0001-…`, incrementing). |
+| `reference/` | Compressed cheat-sheets, glossaries, and reusable mental models. |
 | `assets/` | Shared, reusable components (e.g. `lesson.css`). |
-| `RESOURCES.md` | High-trust sources backing the lessons. |
-| `NOTES.md` | Working notes & learning preferences. |
+| `RESOURCES.md` | High-trust sources and how they fit the plan. |
+| `NOTES.md` | Working notes, decisions, and learning preferences. |
 
 ## Start here
 
+- [Mission — AI inference lab](MISSION.md)
 - [Lesson 1 — Triton deletes a level](lessons/0001-thread-block-grid-in-triton.html)
 - [Reference — CUDA ↔ Triton cheat-sheet](reference/cuda-triton-glossary.html)

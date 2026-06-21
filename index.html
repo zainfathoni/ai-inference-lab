@@ -3,26 +3,49 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>learning-ai-inference — GPU execution model, through Triton</title>
+<title>Zain's AI Inference Lab</title>
 <link rel="stylesheet" href="assets/lesson.css">
 </head>
 <body>
 
-<h1>learning-ai-inference</h1>
-<p class="sub">A personal workspace for building mental models of how GPUs execute work for AI inference — with Triton as the lens.</p>
+<h1>Zain's AI Inference Lab</h1>
+<p class="sub">Zain Fathoni's public lab notebook for AI inference runtime engineering — from Triton kernels to deployable inference systems.</p>
+
+<h2>Start here</h2>
+<p>
+  The short-term forcing function is readiness for Netra Runtime-style inference
+  puzzles: Triton kernels, quantization/dequantization, <code>torch.compile</code>,
+  QLoRA/FSDP2, and benchmark-driven explanations.
+</p>
+<p>
+  The long-term direction is AI runtime engineering: understanding how models
+  move from PyTorch code to fast, observable, deployable inference systems.
+</p>
+<ul>
+  <li><a href="MISSION.md">Mission</a> · the learning and career strategy behind this lab.</li>
+  <li><a href="RESOURCES.md">Resources</a> · the sources, codebases, and constraints guiding the work.</li>
+</ul>
 
 <h2>Lessons</h2>
 <ul>
   <li><a href="lessons/0001-thread-block-grid-in-triton.html">Lesson 1 — Triton deletes a level</a> · how the CUDA thread→block→grid model re-draws itself in Triton.</li>
 </ul>
 
+<h2>Near-term plan</h2>
+<ol>
+  <li>Launch this lab framing and point <code>ai.zainf.dev</code> here.</li>
+  <li>Run a first Triton kernel on a free T4 via Kaggle or Colab.</li>
+  <li>Publish the correctness check, benchmark table, notebook link, and failure notes.</li>
+  <li>Use that loop to attack Netra Task A-style NF4 dequantization.</li>
+</ol>
+
 <h2>Reference</h2>
 <ul>
   <li><a href="reference/cuda-triton-glossary.html">CUDA ↔ Triton cheat-sheet</a> · the execution-model vocabulary, compressed.</li>
 </ul>
 
-<p class="ask">💬 Lessons are static, accessible HTML — readable here, over Tailscale, or offline. Ask your teacher for the next one any time.</p>
+<p class="ask">💬 This is a lab notebook first and a polished portfolio later. Public notes should connect to code, benchmarks, experiments, or Netra-style preparation.</p>
 
-<p class="foot">github.com/zainfathoni/learning-ai-inference · mission: understand the GPU execution model via Triton</p>
+<p class="foot">github.com/zainfathoni/ai-inference-lab</p>
 </body>
 </html>
