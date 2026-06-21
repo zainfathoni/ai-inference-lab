@@ -88,6 +88,10 @@
   mechanics, programmer owns BLOCK_SIZE/grid/correctness/benchmarks). Logged in
   records/0001. Recognition-level only — milestone still needs cold free-recall
   and Experiment 0001. Lesson 2 (tiles & masks) is the natural next teach.
+- 2026-06-21: Cold free-recall on 0001 — Q2/Q3/Q4 clean first try, Q1 (definition)
+  and Q5 (programmer-responsibility half) thin, then re-recalled both clean.
+  Free-recall milestone CLEARED: execution model explained without notes. Only
+  open evidence for 0001 is Experiment 0001 (run on real T4). Logged in records/0001.
 - 2026-07-27: Shipped Lesson 0002 (inference is the ongoing half) from the
   Cloudflare *inference vs. training* explainer Zain brought. Takes its one
   load-bearing sentence ("training … one-time expense … inference … ongoing")

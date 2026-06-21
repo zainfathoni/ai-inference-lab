@@ -13,7 +13,7 @@
 <nav class="topnav"><a href="./">← Zain's AI Inference Lab</a><a class="raw-link" href="records/0001-triton-program-instance.md">raw Markdown</a></nav>
 <main class="markdown-page markdown-body">
 <h1>Record 0001 — Triton program instance recall</h1>
-<p><strong>Status:</strong> recognition quiz passed 4/4 (2026-06-21). Cold free-recall attempted 2026-06-21 — Q2/Q3/Q4 solid, Q1 and Q5 thin (see Correction). Still open: re-recall of Q1/Q5 and Experiment 0001 output.</p>
+<p><strong>Status:</strong> ✅ free-recall milestone cleared (2026-06-21). Recognition quiz 4/4 and cold free-recall both passed — all five concepts explained without notes (Q1 and Q5 re-recalled clean after first-pass gaps). Remaining open: Experiment 0001 output (run on real hardware).</p>
 <h2>Prompt</h2>
 <p>Without looking at Lesson 0001, explain:</p>
 <ol><li>What is a Triton program instance?</li><li>How does it map to CUDA&#39;s grid/block/thread picture?</li><li>In the vector-add kernel, what does <code>tl.program_id(axis=0)</code> identify?</li><li>Why does the kernel need a mask?</li><li>What does Triton hide from me, and what performance questions remain my responsibility?</li></ol>
@@ -24,6 +24,9 @@
 <p>(2026-06-21 review) Concepts 2–4 sound; 1 and 5 thin.</p>
 <ul><li><strong>Q1 — vague.</strong> Missing the defining fact: a program instance <em>runs once per block and owns a whole tile of data</em>. That &quot;once per block&quot; is what separates it from a CUDA thread (once per element).</li><li><strong>Q2 — correct.</strong> Program instance = CUDA block.</li><li><strong>Q3 — correct.</strong> <code>program_id(axis=0)</code> = block index ≈ <code>blockIdx.x</code>.</li><li><strong>Q4 — right idea, one detail short.</strong> It specifically guards the <em>ragged last block</em>: when <code>n<em>elements</code> isn&#39;t a multiple of <code>BLOCK</em>SIZE</code>, the final block&#39;s offsets run past the array end; the mask zeroes those lanes.</li><li><strong>Q5 — half-answered.</strong> Correct on what Triton <em>hides</em> (coalescing, sync, vectorization, scheduling) but skipped what stays mine: <code>BLOCK_SIZE</code>, launch grid, tile indexing, correctness, and benchmarking.</li></ul>
 <p>Next pass: re-recall Q1 and Q5 only.</p>
+<p><strong>Re-recall (2026-06-21):</strong> both clean.</p>
+<ul><li>Q1: &quot;an instance of a kernel that runs once per block and processes an entire tile of elements at a time.&quot; — full definition, the &quot;once per block&quot; clause now present.</li><li>Q5: hides thread-level optimization; programmer owns block size, launch grid, correctness, and benchmarks. (Could also name tile indexing/algorithm as programmer-owned — minor.)</li></ul>
+<p>Milestone cleared: execution model explained cold, no notes.</p>
 <h2>Quiz log</h2>
 <ul><li><strong>2026-06-21 — multiple-choice, 4/4.</strong> Correctly identified: program instance = code running once per <em>block</em> (owns a tile); <code>tl.program<em>id(axis=0)</code> ≈ <code>blockIdx.x</code>; <code>mask</code> guards the ragged last block; compiler owns coalescing/sync/vectorization/scheduling while the programmer keeps <code>BLOCK</em>SIZE</code>, grid, tile indexing, correctness, and benchmarking. Recognition-level evidence — free recall and Experiment 0001 still pending.</li></ul>
 <h2>Link to experiment</h2>
