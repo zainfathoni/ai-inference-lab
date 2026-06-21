@@ -10,7 +10,13 @@ engineering: understanding how models move from PyTorch code to fast,
 observable, deployable inference systems.
 
 The site is intentionally simple: self-contained HTML, readable over `file://`,
-GitHub Pages, or a custom domain, with no build step.
+GitHub Pages, or a custom domain. Lessons and reference docs need no build; only
+the selected Markdown pages are rendered to HTML (see below).
+
+Hosting is published via **GitHub Pages at [`https://ai.zainf.dev/`](https://ai.zainf.dev/)**.
+The full hosting model — source branch, path mappings, build/verify commands, and
+caveats — is documented in [`HOSTING.md`](HOSTING.md). This repo does not use
+Tailscale.
 
 ## Layout
 
@@ -26,6 +32,7 @@ GitHub Pages, or a custom domain, with no build step.
 | `scripts/render-markdown.mjs` | Generates readable HTML pages from selected Markdown files. |
 | `RESOURCES.md` | High-trust sources and how they fit the plan. |
 | `NOTES.md` | Working notes, decisions, and learning preferences. |
+| `HOSTING.md` | How the site is published (GitHub Pages, `ai.zainf.dev`), path mappings, and verification. |
 
 ## Artifact types
 
