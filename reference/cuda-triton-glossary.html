@@ -79,7 +79,7 @@ The compiler turns your tile into threads.
   the whole tile. Six, <em>store</em> the result tile under the mask. The launch below builds the
   <code>grid</code> as <code>n_elements</code> divided by <code>BLOCK_SIZE</code>, rounded up with
   <code>triton.cdiv</code>, then launches the kernel over it.</p>
-  <pre tabindex="0" aria-label="Triton kernel skeleton in six beats: pid reads the program id; offsets is pid times BLOCK_SIZE plus arange; mask keeps offsets below n_elements; load the tile; compute over the tile; store the tile. Then the launch builds grid as ceiling of n_elements over BLOCK_SIZE with triton.cdiv and launches the kernel with BLOCK_SIZE 1024."><code>@triton.jit
+  <pre role="img" tabindex="0" aria-label="Triton kernel skeleton in six beats: pid reads the program id; offsets is pid times BLOCK_SIZE plus arange; mask keeps offsets below n_elements; load the tile; compute over the tile; store the tile. Then the launch builds grid as ceiling of n_elements over BLOCK_SIZE with triton.cdiv and launches the kernel with BLOCK_SIZE 1024."><code>@triton.jit
 def kernel(x_ptr, ..., n_elements, BLOCK_SIZE: tl.constexpr):
     pid     = tl.program_id(axis=0)             # 1. who am I
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)  # 2. my tile of indices
