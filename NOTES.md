@@ -10,21 +10,28 @@
   for specific blockers or final measurements.
 - Weekly time budget: **10–15 hours**.
 - Publishing style: lab notebook now, polished portfolio later.
-- Baseten/course usage: publish only when connected to an experiment,
-  benchmark, implementation, or Netra task.
+- Artifact model: lessons teach; records test understanding; experiments test
+  code/performance; portfolio pages are curated later.
+- Baseten/course usage: publish only when connected to a lesson, learning
+  record, experiment, benchmark, implementation, or Netra task.
 
 ## Learner preferences
 - Comes to GPUs **through Triton**, not CUDA. Frame the hardware model with
   Triton as the lens, not the other way around.
 - New to the CUDA thread/block/grid vocabulary (2026-06-20).
 - Theory should stay in service of building proof-of-work: runnable code,
-  reproducible benchmarks, defensible explanations.
+  reproducible benchmarks, defensible explanations. But `/teach` artifacts are
+  still first-class: AI-generated lessons are useful as long as the cycle later
+  closes through recall, correction, or execution.
 
 ## Workspace conventions
 - Shared styles live in `assets/lesson.css`; every lesson/reference links it.
 - Glossary established in `reference/cuda-triton-glossary.html` — adhere to its
   terms in all future lessons (Grid, Block, Thread, Program instance, Tile,
   SPMD, Mask).
+- Use `lessons/` for teaching artifacts, `records/` for learner-authored recall
+  and corrections, `experiments/` for runnable work and measurements, and
+  `portfolio/` later for curated proof-of-work.
 
 ## Progress log
 - 2026-06-20: Lesson 0001 (thread→block→grid in Triton) shipped. Awaiting quiz
@@ -32,3 +39,5 @@
   understanding).
 - 2026-06-20: Reframed the repo from a one-off lesson site into an AI inference
   lab oriented around Netra-style readiness and long-term runtime engineering.
+- 2026-06-21: Clarified that the lab has both a teaching track and an evidence
+  track. Portfolio value matters, but not at the expense of AI-assisted learning.

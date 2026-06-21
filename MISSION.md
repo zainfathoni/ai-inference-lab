@@ -30,6 +30,26 @@ work is the proof mechanism; production inference is the monetization path.
   validation first, and paid GPU bursts only when there is a specific benchmark
   or blocker worth the spend.
 
+## How the lab works
+
+This lab has two jobs:
+
+1. Teach me hard AI inference concepts using small `/teach`-style lessons,
+   references, quizzes, and corrections.
+2. Convert the important parts of that learning into evidence: learning records,
+   experiments, benchmarks, and eventually portfolio artifacts.
+
+The sequence is usually:
+
+1. A **lesson** explains one concept.
+2. A **learning record** captures my recall, mistakes, and corrections.
+3. An **experiment** runs code or measures behavior when the concept is
+   practical.
+4. A **portfolio artifact** may later curate the best evidence.
+
+Lessons are valid teaching artifacts. They are not, by themselves, proof of
+mastery. The proof comes from recall, correction, execution, and measurement.
+
 ## What "success" looks like for now
 
 - Month 1: ship the lab framing, run the first Triton-on-T4 experiment, and
@@ -56,8 +76,9 @@ Triton fundamentals; move toward quantization, dequantization, matmul,
 attention, KV cache, model loading, and serving tradeoffs.
 
 Baseten's _Inference Engineering_ book/course is used as a map, not as the main
-output. Public notes should connect reading to an experiment, benchmark,
-implementation, or Netra task — no standalone book reports.
+output. Public Baseten notes should connect reading to a lesson, learning
+record, experiment, benchmark, implementation, or Netra task — no standalone
+book reports.
 
 _Mission may evolve as skills grow — update this file and add a learning record
 when it does._
