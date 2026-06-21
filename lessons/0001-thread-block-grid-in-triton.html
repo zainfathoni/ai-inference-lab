@@ -4,9 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lesson 1 — Thread → Block → Grid, the Triton way</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0001-thread-block-grid-in-triton.html">
 <link rel="stylesheet" href="../assets/lesson.css">
 </head>
 <body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
 
 <h1>Triton deletes a level</h1>
 <p class="sub">Lesson 1 · mission: understand the GPU execution model · the diagram, re-drawn for Triton</p>
@@ -38,7 +41,7 @@ this lesson — everything below is detail.</p>
 <h2>CUDA vs Triton: who writes what</h2>
 <div class="compare">
   <div class="c-cuda">
-    <h4>CUDA — you are one thread</h4>
+    <h3>CUDA — you are one thread</h3>
     <ul>
       <li>Your code runs once <em>per thread</em>.</li>
       <li>You compute <em>your</em> element: <code>i = blockIdx.x*blockDim.x + threadIdx.x</code>.</li>
@@ -47,7 +50,7 @@ this lesson — everything below is detail.</p>
     </ul>
   </div>
   <div class="c-triton">
-    <h4>Triton — you are one program</h4>
+    <h3>Triton — you are one program</h3>
     <ul>
       <li>Your code runs once <em>per block</em> (called a <span class="keep">program instance</span>).</li>
       <li>You compute <em>your block's</em> range of elements with <code>tl.program_id(0)</code>.</li>
@@ -74,7 +77,17 @@ different <code>program_id</code>'s on a grid of so-called instances."
 <h2>See it in the canonical first kernel</h2>
 <p>Vector add: <code>output = x + y</code>. Watch how every line is about the <em>block</em>, never a thread.</p>
 
-<pre><code>@triton.jit
+<figure>
+  <figcaption>The Triton vector-add kernel: every line operates on a whole block (tile), never a single thread.</figcaption>
+  <p class="listen"><b>Listen first:</b> this kernel adds two arrays one block at a time. It reads its
+  program id into <code>pid</code> — that is which block it owns, the rough equivalent of
+  <code>blockIdx.x</code>. It computes <code>block_start</code> as <code>pid</code> times
+  <code>BLOCK_SIZE</code>, the first element this block owns. Then <code>offsets</code> is
+  <code>block_start</code> plus a range from zero up to <code>BLOCK_SIZE</code> — a whole tile of
+  indices rather than one. The <code>mask</code> keeps only offsets still below <code>n_elements</code>,
+  guarding the ragged last block. It loads the <code>x</code> and <code>y</code> tiles under that mask,
+  adds them in a single operation over the whole tile, then stores the result tile back.</p>
+  <pre tabindex="0" aria-label="Triton kernel add_kernel. It reads program id into pid, computes block_start as pid times BLOCK_SIZE, builds an offsets tile with arange, masks offsets below n_elements, loads the x and y tiles, adds them in one operation, and stores the output tile."><code>@triton.jit
 def add_kernel(x_ptr, y_ptr, output_ptr, n_elements,
                BLOCK_SIZE: tl.constexpr):
     pid = tl.program_id(axis=0)            # which block am I?  (≈ blockIdx.x)
@@ -85,12 +98,21 @@ def add_kernel(x_ptr, y_ptr, output_ptr, n_elements,
     y = tl.load(y_ptr + offsets, mask=mask)
     output = x + y                         # one op over the WHOLE tile
     tl.store(output_ptr + offsets, output, mask=mask)  # store the tile</code></pre>
-<p class="srcline">Source (official tutorial):
-  <a class="gh" href="https://triton-lang.org/main/getting-started/tutorials/01-vector-add.html">Triton · Vector Addition↗</a></p>
+  <p class="srcline">Source (official tutorial):
+    <a class="gh" href="https://triton-lang.org/main/getting-started/tutorials/01-vector-add.html" aria-label="Open the official Triton vector addition tutorial">Triton · Vector Addition↗</a></p>
+</figure>
 
-<pre><code># launch: how many programs (blocks) do we need?
+<figure>
+  <figcaption>The launch side: compute how many programs (blocks) are needed, then launch the kernel on that grid.</figcaption>
+  <p class="listen"><b>Listen first:</b> this is the launch, not the kernel. <code>grid</code> is a small
+  function that returns how many programs — blocks — we need: the number of elements divided by
+  <code>BLOCK_SIZE</code>, rounded up with <code>triton.cdiv</code>. Then <code>add_kernel</code> is
+  launched over that grid, passing the three buffers, the element count, and a <code>BLOCK_SIZE</code>
+  of 1024.</p>
+  <pre tabindex="0" aria-label="Launch code. grid is the ceiling of n_elements divided by BLOCK_SIZE using triton.cdiv. Then add_kernel is launched on that grid with the x, y, and output buffers, n_elements, and BLOCK_SIZE of 1024."><code># launch: how many programs (blocks) do we need?
 grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
 add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)</code></pre>
+</figure>
 
 <p>The tells that you're at the block level, not the thread level:</p>
 <ul>
@@ -126,5 +148,6 @@ Stop at the line about "programs — rather than threads — are blocked"; that 
 becomes "threads" on the GPU, or what a tile really is? Ask, and I'll build the next lesson around it.</p>
 
 <p class="foot">Lesson 1 · Zain's AI Inference Lab · mission: understand the GPU execution model via Triton</p>
+</main>
 </body>
 </html>

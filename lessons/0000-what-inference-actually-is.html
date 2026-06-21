@@ -4,9 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lesson 0 — What inference actually is (for a fullstack dev)</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0000-what-inference-actually-is.html">
 <link rel="stylesheet" href="../assets/lesson.css">
 </head>
 <body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
 
 <h1>You're not learning "AI". You're learning a hot path.</h1>
 <p class="sub">Lesson 0 · the orientation the webinar slides would have given you · for a fullstack dev who last touched AI 12 years ago</p>
@@ -23,7 +26,7 @@ Your mission lives entirely in the <em>right</em> column.</p>
 
 <div class="compare">
   <div class="c-cuda">
-    <h4>TRAINING — what you studied in college</h4>
+    <h3>TRAINING — what you studied in college</h3>
     <ul>
       <li><b>Goal:</b> compute the model's weights from data.</li>
       <li>Backprop, gradients, loss functions, optimizers.</li>
@@ -33,7 +36,7 @@ Your mission lives entirely in the <em>right</em> column.</p>
     </ul>
   </div>
   <div class="c-triton">
-    <h4>INFERENCE — your turf</h4>
+    <h3>INFERENCE — your turf</h3>
     <ul>
       <li><b>Goal:</b> run the finished model <span class="keep">fast and correct</span>.</li>
       <li>Memory layout, kernels, bandwidth, latency, cost.</li>
@@ -53,9 +56,16 @@ do engineering problems.</p>
 <p>Strip away the mystique and a model running inference is something you already understand: a
 <b>pure function</b> over a giant constant.</p>
 
-<pre><code>output = model(input)        # that's the whole shape of it
+<figure>
+  <figcaption>The whole shape of inference: output equals the model applied to an input.</figcaption>
+  <p class="listen"><b>Listen first:</b> the one line is <code>output = model(input)</code> — read it as
+  "output is what you get when you call the model on the input." The model is a fixed blob of numbers,
+  the weights, loaded once and never changed, plus a fixed sequence of array operations. Nothing learns
+  here; it only computes.</p>
+  <pre tabindex="0" aria-label="Pseudocode. output equals model called with input. The model is a fixed blob of numbers, the weights, loaded once, plus a fixed sequence of array operations."><code>output = model(input)        # that's the whole shape of it
 #         ^^^^^ a fixed blob of numbers (the "weights"), loaded once
 #               + a fixed sequence of array operations</code></pre>
+</figure>
 
 <p>Four facts are all the "AI" you need to start. Each has a web-dev analogy:</p>
 
@@ -144,5 +154,6 @@ I'll tighten it before you move to Lesson 1.</p>
 </ul>
 
 <p class="foot">Lesson 0 · Zain's AI Inference Lab · orientation for a fullstack dev · the missing webinar frame</p>
+</main>
 </body>
 </html>

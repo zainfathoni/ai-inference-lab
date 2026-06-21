@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Reference — CUDA ↔ Triton glossary & cheat-sheet</title>
+<link rel="canonical" href="https://ai.zainf.dev/reference/cuda-triton-glossary.html">
 <link rel="stylesheet" href="../assets/lesson.css">
 <style>
   /* print-friendly: tight, single-color, fits a page */
@@ -13,6 +14,8 @@
 </style>
 </head>
 <body>
+<a class="skip" href="#ref-main">Skip to reference content</a>
+<main id="ref-main">
 
 <h1>CUDA ↔ Triton cheat-sheet</h1>
 <p class="sub">Reference · the execution-model vocabulary, compressed · keep open while reading lessons</p>
@@ -63,10 +66,20 @@ The compiler turns your tile into threads.
   <li>tensor-core-aware instruction selection</li>
   <li>asynchronous copy scheduling</li>
 </ul>
-<p class="srcline"><a class="gh" href="https://triton-lang.org/main/programming-guide/chapter-1/introduction.html">Triton docs · Introduction↗</a></p>
+<p class="srcline"><a class="gh" href="https://triton-lang.org/main/programming-guide/chapter-1/introduction.html" aria-label="Open the Triton docs programming-guide introduction">Triton docs · Introduction↗</a></p>
 
 <h2>The kernel skeleton (memorize the shape)</h2>
-<pre><code>@triton.jit
+<figure>
+  <figcaption>The canonical Triton kernel skeleton, in six beats, plus its launch.</figcaption>
+  <p class="listen"><b>Listen first:</b> memorize the kernel as six beats. One, <em>who am I</em> —
+  <code>pid</code> reads the program id. Two, <em>my indices</em> — <code>offsets</code> is
+  <code>pid</code> times <code>BLOCK_SIZE</code> plus a range up to <code>BLOCK_SIZE</code>, the tile this
+  program owns. Three, <em>guard the edge</em> — <code>mask</code> keeps offsets below
+  <code>n_elements</code>. Four, <em>load</em> the input tile under the mask. Five, <em>compute</em> over
+  the whole tile. Six, <em>store</em> the result tile under the mask. The launch below builds the
+  <code>grid</code> as <code>n_elements</code> divided by <code>BLOCK_SIZE</code>, rounded up with
+  <code>triton.cdiv</code>, then launches the kernel over it.</p>
+  <pre tabindex="0" aria-label="Triton kernel skeleton in six beats: pid reads the program id; offsets is pid times BLOCK_SIZE plus arange; mask keeps offsets below n_elements; load the tile; compute over the tile; store the tile. Then the launch builds grid as ceiling of n_elements over BLOCK_SIZE with triton.cdiv and launches the kernel with BLOCK_SIZE 1024."><code>@triton.jit
 def kernel(x_ptr, ..., n_elements, BLOCK_SIZE: tl.constexpr):
     pid     = tl.program_id(axis=0)             # 1. who am I
     offsets = pid * BLOCK_SIZE + tl.arange(0, BLOCK_SIZE)  # 2. my tile of indices
@@ -78,10 +91,12 @@ def kernel(x_ptr, ..., n_elements, BLOCK_SIZE: tl.constexpr):
 # launch
 grid = lambda meta: (triton.cdiv(n_elements, meta['BLOCK_SIZE']),)
 kernel[grid](x, ..., n_elements, BLOCK_SIZE=1024)</code></pre>
+</figure>
 <p>Six beats: <b>who am I → my indices → mask → load → compute → store</b>.</p>
 
 <p class="ask">💬 Ask your teacher to expand any row of these tables into its own lesson.</p>
 
 <p class="foot">Reference · Zain's AI Inference Lab · sources: openai.com/index/triton, triton-lang.org</p>
+</main>
 </body>
 </html>
