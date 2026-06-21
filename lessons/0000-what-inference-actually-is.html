@@ -62,7 +62,7 @@ do engineering problems.</p>
   "output is what you get when you call the model on the input." The model is a fixed blob of numbers,
   the weights, loaded once and never changed, plus a fixed sequence of array operations. Nothing learns
   here; it only computes.</p>
-  <pre role="img" tabindex="0" aria-label="Pseudocode. output equals model called with input. The model is a fixed blob of numbers, the weights, loaded once, plus a fixed sequence of array operations."><code>output = model(input)        # that's the whole shape of it
+  <pre aria-hidden="true"><code>output = model(input)        # that's the whole shape of it
 #         ^^^^^ a fixed blob of numbers (the "weights"), loaded once
 #               + a fixed sequence of array operations</code></pre>
 </figure>
