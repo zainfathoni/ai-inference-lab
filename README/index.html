@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="../">
+<title>README · Zain's AI Inference Lab</title>
+<link rel="stylesheet" href="assets/lesson.css">
+<link rel="stylesheet" href="assets/markdown-page.css">
+</head>
+<body>
+<!-- Generated from ../README.md by scripts/render-markdown.mjs. Do not edit directly. -->
+<nav class="topnav"><a href="./">← Zain's AI Inference Lab</a><a class="raw-link" href="README.md">raw Markdown</a></nav>
+<main class="markdown-page markdown-body">
+<h1>Zain&#39;s AI Inference Lab</h1>
+<p>Zain Fathoni&#39;s public lab notebook for learning <strong>AI inference runtime engineering</strong> in public.</p>
+<p>The short-term benchmark is readiness for Netra Runtime-style inference puzzles: Triton kernels, quantization/dequantization, <code>torch.compile</code>, QLoRA/FSDP2, and benchmark-driven explanations. The longer-term direction is AI runtime engineering: understanding how models move from PyTorch code to fast, observable, deployable inference systems.</p>
+<p>The site is intentionally simple: self-contained HTML, readable over <code>file://</code>, GitHub Pages, or a custom domain, with no build step.</p>
+<h2>Layout</h2>
+<table><thead><tr><th>Path</th><th>What it holds</th></tr></thead><tbody><tr><td><code>MISSION.md</code></td><td>The learning and career strategy behind the lab.</td></tr>
+<tr><td><code>lessons/</code></td><td>AI-assisted teaching artifacts: one concept at a time, with examples and quizzes.</td></tr>
+<tr><td><code>records/</code></td><td>Learner-authored recall, corrections, and learning records. Create as cycles close.</td></tr>
+<tr><td><code>experiments/</code></td><td>Runnable notebooks/scripts, benchmark outputs, environment notes, and failure logs. Create as runs happen.</td></tr>
+<tr><td><code>portfolio/</code></td><td>Later: selected polished proof-of-work artifacts promoted from records/experiments.</td></tr>
+<tr><td><code>reference/</code></td><td>Compressed cheat-sheets, glossaries, and reusable mental models.</td></tr>
+<tr><td><code>assets/</code></td><td>Shared, reusable components (e.g. <code>lesson.css</code>).</td></tr>
+<tr><td><code>scripts/render-markdown.mjs</code></td><td>Generates readable HTML pages from top-level Markdown files.</td></tr>
+<tr><td><code>RESOURCES.md</code></td><td>High-trust sources and how they fit the plan.</td></tr>
+<tr><td><code>NOTES.md</code></td><td>Working notes, decisions, and learning preferences.</td></tr></tbody></table>
+<h2>Artifact types</h2>
+<p>This repo is a learning lab first and a portfolio second. Different artifacts do different jobs:</p>
+<ul><li><strong>Lessons</strong> teach one concept using the <code>/teach</code> style: clear mental model, examples, references, and active-recall prompts. A lesson is not a claim of mastery by itself.</li><li><strong>Learning records</strong> are written after recall or practice. They capture what I could explain without notes, what was wrong or fuzzy, and what changed after correction.</li><li><strong>Experiments</strong> test code, environments, or performance claims. They should include enough output, timing, notebook/script links, and failure notes to be reproducible.</li><li><strong>Portfolio artifacts</strong> are curated later from the strongest records and experiments. They are not the main output during early learning.</li></ul>
+<p>The rule is: every learning cycle should eventually close with either a tested understanding record or an executed experiment. Teaching material is allowed — that is how I learn with AI — but it should not be mistaken for proof-of-work.</p>
+<h2>Markdown pages</h2>
+<p>Markdown files remain the source of truth for <code>/teach</code>-friendly artifacts. For comfortable reading on the site, generated HTML versions live at extensionless directory URLs:</p>
+<table><thead><tr><th>Raw Markdown</th><th>Rendered page</th></tr></thead><tbody><tr><td><code>MISSION.md</code></td><td><code>MISSION/</code></td></tr>
+<tr><td><code>README.md</code></td><td><code>README/</code></td></tr>
+<tr><td><code>RESOURCES.md</code></td><td><code>RESOURCES/</code></td></tr>
+<tr><td><code>NOTES.md</code></td><td><code>NOTES/</code></td></tr></tbody></table>
+<p>Regenerate rendered pages after editing top-level Markdown:</p>
+<pre><code class="language-bash">node scripts/render-markdown.mjs</code></pre>
+<p>The renderer is intentionally local and dependency-free: no CDN, no visitor-side Markdown library, and no runtime JavaScript for Markdown rendering. Generated HTML files include a comment warning not to edit them directly.</p>
+<h2>Start here</h2>
+<ul><li><a href="MISSION/">Mission — AI inference lab</a> (<a href="MISSION.md">raw Markdown</a>)</li><li><a href="lessons/0001-thread-block-grid-in-triton.html">Lesson 1 — Triton deletes a level</a></li><li><a href="reference/cuda-triton-glossary.html">Reference — CUDA ↔ Triton cheat-sheet</a></li></ul>
+</main>
+</body>
+</html>

@@ -23,6 +23,7 @@ GitHub Pages, or a custom domain, with no build step.
 | `portfolio/` | Later: selected polished proof-of-work artifacts promoted from records/experiments. |
 | `reference/` | Compressed cheat-sheets, glossaries, and reusable mental models. |
 | `assets/` | Shared, reusable components (e.g. `lesson.css`). |
+| `scripts/render-markdown.mjs` | Generates readable HTML pages from top-level Markdown files. |
 | `RESOURCES.md` | High-trust sources and how they fit the plan. |
 | `NOTES.md` | Working notes, decisions, and learning preferences. |
 
@@ -47,8 +48,31 @@ The rule is: every learning cycle should eventually close with either a tested
 understanding record or an executed experiment. Teaching material is allowed —
 that is how I learn with AI — but it should not be mistaken for proof-of-work.
 
+## Markdown pages
+
+Markdown files remain the source of truth for `/teach`-friendly artifacts. For
+comfortable reading on the site, generated HTML versions live at extensionless
+directory URLs:
+
+| Raw Markdown | Rendered page |
+| ------------ | ------------- |
+| `MISSION.md` | `MISSION/` |
+| `README.md` | `README/` |
+| `RESOURCES.md` | `RESOURCES/` |
+| `NOTES.md` | `NOTES/` |
+
+Regenerate rendered pages after editing top-level Markdown:
+
+```bash
+node scripts/render-markdown.mjs
+```
+
+The renderer is intentionally local and dependency-free: no CDN, no visitor-side
+Markdown library, and no runtime JavaScript for Markdown rendering. Generated
+HTML files include a comment warning not to edit them directly.
+
 ## Start here
 
-- [Mission — AI inference lab](MISSION.md)
+- [Mission — AI inference lab](MISSION/) ([raw Markdown](MISSION.md))
 - [Lesson 1 — Triton deletes a level](lessons/0001-thread-block-grid-in-triton.html)
 - [Reference — CUDA ↔ Triton cheat-sheet](reference/cuda-triton-glossary.html)

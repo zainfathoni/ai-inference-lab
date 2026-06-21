@@ -1,0 +1,12 @@
+main.markdown-page { margin-top:1.5rem; }
+.topnav { display:flex; justify-content:space-between; gap:1rem; align-items:baseline;
+          margin-bottom:2rem; font-size:.86rem; color:var(--muted); }
+.topnav a { color:var(--accent); }
+.raw-link { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:.74rem; }
+.markdown-body h1:first-child { margin-top:0; }
+.markdown-body ul, .markdown-body ol { padding-left:1.35rem; }
+.markdown-body li { margin:.25rem 0; }
+.markdown-body hr { border:0; border-top:1px solid var(--rule); margin:2rem 0; }
+.markdown-body table { display:block; overflow-x:auto; }
+.markdown-error { border:1px solid #e0b4b4; background:#fff2f2; padding:1rem;
+                  border-radius:6px; color:#7a2525; }

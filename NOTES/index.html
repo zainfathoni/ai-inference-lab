@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="../">
+<title>Notes · Zain's AI Inference Lab</title>
+<link rel="stylesheet" href="assets/lesson.css">
+<link rel="stylesheet" href="assets/markdown-page.css">
+</head>
+<body>
+<!-- Generated from ../NOTES.md by scripts/render-markdown.mjs. Do not edit directly. -->
+<nav class="topnav"><a href="./">← Zain's AI Inference Lab</a><a class="raw-link" href="NOTES.md">raw Markdown</a></nav>
+<main class="markdown-page markdown-body">
+<h1>Lab notes</h1>
+<h2>Current strategy</h2>
+<ul><li>Short-term objective: prepare for Netra Runtime-style inference engineering puzzles as a concrete benchmark.</li><li>Long-term archetype: <strong>AI runtime engineer</strong>, with Triton/kernel work as proof and production inference as the monetization path.</li><li>Month 1 GPU budget: <strong>$25 max</strong>. Use free Kaggle/Colab first; paid GPU only for specific blockers or final measurements.</li><li>Weekly time budget: <strong>10–15 hours</strong>.</li><li>Publishing style: lab notebook now, polished portfolio later.</li><li>Artifact model: lessons teach; records test understanding; experiments test code/performance; portfolio pages are curated later.</li><li>Baseten/course usage: publish only when connected to a lesson, learning record, experiment, benchmark, implementation, or Netra task.</li></ul>
+<h2>Learner preferences</h2>
+<ul><li>Comes to GPUs <strong>through Triton</strong>, not CUDA. Frame the hardware model with Triton as the lens, not the other way around.</li><li>New to the CUDA thread/block/grid vocabulary (2026-06-20).</li><li>Theory should stay in service of building proof-of-work: runnable code, reproducible benchmarks, defensible explanations. But <code>/teach</code> artifacts are still first-class: AI-generated lessons are useful as long as the cycle later closes through recall, correction, or execution.</li></ul>
+<h2>Workspace conventions</h2>
+<ul><li>Shared styles live in <code>assets/lesson.css</code>; every lesson/reference links it.</li><li>Glossary established in <code>reference/cuda-triton-glossary.html</code> — adhere to its terms in all future lessons (Grid, Block, Thread, Program instance, Tile, SPMD, Mask).</li><li>Use <code>lessons/</code> for teaching artifacts, <code>records/</code> for learner-authored recall and corrections, <code>experiments/</code> for runnable work and measurements, and <code>portfolio/</code> later for curated proof-of-work.</li></ul>
+<h2>Progress log</h2>
+<ul><li>2026-06-20: Lesson 0001 (thread→block→grid in Triton) shipped. Awaiting quiz result before writing the first learning record (record only on demonstrated understanding).</li><li>2026-06-20: Reframed the repo from a one-off lesson site into an AI inference lab oriented around Netra-style readiness and long-term runtime engineering.</li><li>2026-06-21: Clarified that the lab has both a teaching track and an evidence track. Portfolio value matters, but not at the expense of AI-assisted learning.</li></ul>
+</main>
+</body>
+</html>

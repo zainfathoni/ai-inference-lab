@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="../">
+<title>Resources · Zain's AI Inference Lab</title>
+<link rel="stylesheet" href="assets/lesson.css">
+<link rel="stylesheet" href="assets/markdown-page.css">
+</head>
+<body>
+<!-- Generated from ../RESOURCES.md by scripts/render-markdown.mjs. Do not edit directly. -->
+<nav class="topnav"><a href="./">← Zain's AI Inference Lab</a><a class="raw-link" href="RESOURCES.md">raw Markdown</a></nav>
+<main class="markdown-page markdown-body">
+<h1>Resources</h1>
+<p>High-trust sources for grounding the AI inference lab. Triton is young and fast-moving, so prefer official docs, primary source material, reproducible benchmarks, and real codebases over generic roadmaps.</p>
+<h2>How to use these resources</h2>
+<ul><li>Use Netra-style tasks as the short-term benchmark.</li><li>Use Triton/CUDA material for hands-on kernel skill.</li><li>Use Baseten&#39;s inference material as the high-level map.</li><li>Use real runtimes like <code>sam3.c</code>, llama.cpp, vLLM, and SGLang as architecture studies, but scope each study to one subsystem at a time.</li><li>Avoid roadmap-driven wandering unless it directly supports an experiment.</li></ul>
+<h2>Current target</h2>
+<ul><li><strong><a href="https://hackmd.io/@netraruntime/r1M7l9r0Wx">Netra Runtime — AI Engineer Interview Puzzles</a></strong></li><li>Practical benchmark for Triton kernels, quantization/dequantization, QLoRA/FSDP2, <code>torch.compile</code>, upstream PRs, and performance explanations.</li><li>Use as a forcing function, not necessarily as the final employer target.</li></ul>
+<h2>Primary / canonical</h2>
+<ul><li><strong><a href="https://openai.com/index/triton/">Introducing Triton: Open-source GPU programming for neural networks</a></strong> — OpenAI (2021)</li><li>Trust: ★★★★★ (the source of record). The phrase that grounds Lesson 0001: Triton uses an SPMD model &quot;in which programs – rather than threads – are blocked.&quot; Kernels are &quot;launched concurrently with different <code>program_id</code>&#39;s on a grid of so-called instances.&quot; ~10-min read.</li><li><strong><a href="https://triton-lang.org/main/programming-guide/chapter-1/introduction.html">Triton documentation — Introduction</a></strong> — triton-lang.org</li><li>Trust: ★★★★★ (official). Lists exactly what the compiler automates: &quot;automatic coalescing, thread swizzling, pre-fetching, automatic vectorization, tensor core-aware instruction selection, shared memory allocation/synchronization, asynchronous copy scheduling.&quot;</li><li><strong><a href="https://triton-lang.org/main/getting-started/tutorials/01-vector-add.html">Triton tutorial — Vector Addition</a></strong> — triton-lang.org</li><li>Trust: ★★★★★ (official). The canonical first kernel. Source of the annotated <code>add_kernel</code> in Lesson 0001.</li></ul>
+<h2>Inference engineering map</h2>
+<ul><li><strong><a href="https://www.baseten.co/inference-engineering/">Inference Engineering</a></strong> — Baseten</li><li>Use as a stack map: models, hardware, software, optimization techniques, modalities, and production. Do not publish standalone chapter summaries; connect reading to experiments.</li><li><strong><a href="https://inferenceengineering.tech/">inferenceengineering.tech</a></strong></li><li>Interactive companion/course. Useful for reinforcement, but lower priority than implementing and benchmarking.</li></ul>
+<h2>GPU fundamentals</h2>
+<ul><li><strong>Programming Massively Parallel Processors</strong></li><li>Deep CUDA/GPU fundamentals. Use selectively to answer concrete questions raised by Triton experiments; avoid reading cover-to-cover before coding.</li></ul>
+<h2>Runtime codebases to study</h2>
+<ul><li><strong><a href="https://github.com/NetraRuntime/sam3.c">NetraRuntime/sam3.c</a></strong></li><li>A pure-C SAM3 inference runtime with custom tensor ops, CPU/Metal backends, mmap weight loading, quantization support, feature caching, CLI/bindings, and benchmarks. Study as an example of model-specific runtime engineering.</li></ul>
+<h2>Background on the CUDA model (the diagram)</h2>
+<ul><li><strong><a href="https://en.wikipedia.org/wiki/Thread<em>block</em>(CUDA_programming">Thread block (CUDA programming) — Wikipedia</a>)</strong></li><li>Trust: ★★★☆☆ (good enough for the vocabulary in the diagram: <code>threadIdx</code>, <code>blockIdx</code>, <code>blockDim</code>, <code>gridDim</code>).</li></ul>
+<h2>Secondary (orientation, read with care)</h2>
+<ul><li><strong><a href="https://medium.com/@varuntej07/triton-is-not-cuda-in-python-its-a-tiling-dsl-c65c15ce3c46">Triton Is Not CUDA in Python — It&#39;s a Tiling DSL</a></strong> — Medium</li><li>Trust: ★★★☆☆. Useful framing (&quot;one program processes a whole tile, not one value&quot;), but verify any claim against the official docs above.</li></ul>
+<h2>Communities (for wisdom — testing understanding with practitioners)</h2>
+<ul><li><strong>GPU MODE</strong> (formerly CUDA MODE) Discord + YouTube lectures — active practitioner community for Triton/CUDA kernel work.</li><li><strong><a href="https://github.com/triton-lang/triton/discussions">Triton GitHub Discussions</a></strong> — questions answered by maintainers.</li><li>r/CUDA and r/LocalLLaMA for inference-focused discussion.</li></ul>
+</main>
+</body>
+</html>

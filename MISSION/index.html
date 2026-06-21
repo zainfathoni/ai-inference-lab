@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="../">
+<title>Mission · Zain's AI Inference Lab</title>
+<link rel="stylesheet" href="assets/lesson.css">
+<link rel="stylesheet" href="assets/markdown-page.css">
+</head>
+<body>
+<!-- Generated from ../MISSION.md by scripts/render-markdown.mjs. Do not edit directly. -->
+<nav class="topnav"><a href="./">← Zain's AI Inference Lab</a><a class="raw-link" href="MISSION.md">raw Markdown</a></nav>
+<main class="markdown-page markdown-body">
+<h1>Mission</h1>
+<p><strong>Learner:</strong> Zain Fathoni</p>
+<h2>Why this topic</h2>
+<p>Build public proof-of-work toward <strong>AI inference runtime engineering</strong>: the part of AI systems where model architecture, kernels, memory layout, runtimes, serving constraints, and production cost meet.</p>
+<p>The short-term forcing function is Netra Runtime-style inference engineering puzzles. They are useful even if Netra is not the final employer because they make progress measurable: kernels must be correct, benchmarks must beat real baselines, and implementation choices must be defensible.</p>
+<p>The long-term career direction is <strong>AI runtime engineer</strong>: understand how models move from PyTorch code to fast, observable, deployable inference systems. Kernel work is the proof mechanism; production inference is the monetization path.</p>
+<h2>Starting point (2026-06-20)</h2>
+<ul><li>New to the CUDA thread / block / grid model — the shared diagram (Netra Runtime &quot;Thread → Block → Grid&quot;) is roughly first contact with <code>threadIdx</code> / <code>blockIdx</code> / <code>gridDim</code>.</li><li>Comes in via Triton, not CUDA, so the natural framing is: <em>here is the three-level hardware model, and here is how Triton deliberately hides one level so you program at the block (&quot;program&quot;) level.</em></li><li>Current hardware is Apple Silicon, not a local NVIDIA workstation. The lab workflow is local development and correctness on Mac, free Kaggle/Colab GPU validation first, and paid GPU bursts only when there is a specific benchmark or blocker worth the spend.</li></ul>
+<h2>How the lab works</h2>
+<p>This lab has two jobs:</p>
+<ol><li>Teach me hard AI inference concepts using small <code>/teach</code>-style lessons, references, quizzes, and corrections.</li><li>Convert the important parts of that learning into evidence: learning records, experiments, benchmarks, and eventually portfolio artifacts.</li></ol>
+<p>The sequence is usually:</p>
+<ol><li>A <strong>lesson</strong> explains one concept.</li><li>A <strong>learning record</strong> captures my recall, mistakes, and corrections.</li><li>An <strong>experiment</strong> runs code or measures behavior when the concept is practical.</li><li>A <strong>portfolio artifact</strong> may later curate the best evidence.</li></ol>
+<p>Lessons are valid teaching artifacts. They are not, by themselves, proof of mastery. The proof comes from recall, correction, execution, and measurement.</p>
+<h2>What &quot;success&quot; looks like for now</h2>
+<ul><li>Month 1: ship the lab framing, run the first Triton-on-T4 experiment, and publish the hardware-constrained workflow.</li><li>8–12 weeks: produce a credible Netra-style submission attempt, especially around Triton, quantization/dequantization, and benchmark methodology.</li><li>Long term: build a portfolio that shows recent systems depth across kernels, model execution/runtime internals, and production inference tradeoffs.</li></ul>
+<p>The first technical milestone remains foundational:</p>
+<ul><li>Can explain, without notes, what a Triton <strong>program instance</strong> is and how it maps onto the CUDA grid/block/thread picture.</li><li>Can point at any line of a simple Triton kernel and say which part of the execution model it corresponds to.</li><li>Knows which concurrency concerns Triton automates away and which performance questions remain the programmer&#39;s responsibility.</li></ul>
+<h2>Notes on scope</h2>
+<p>Grounded in AI <strong>inference</strong>: prefer examples and motivations that show up in real inference kernels and runtimes. Start with elementwise/fused ops and Triton fundamentals; move toward quantization, dequantization, matmul, attention, KV cache, model loading, and serving tradeoffs.</p>
+<p>Baseten&#39;s <em>Inference Engineering</em> book/course is used as a map, not as the main output. Public Baseten notes should connect reading to a lesson, learning record, experiment, benchmark, implementation, or Netra task — no standalone book reports.</p>
+<p><em>Mission may evolve as skills grow — update this file and add a learning record when it does.</em></p>
+</main>
+</body>
+</html>
