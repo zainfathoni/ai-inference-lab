@@ -45,6 +45,11 @@
   the `.md`, never the generated `index.html`. Lessons/reference/homepage are
   hand-authored HTML and edited directly.
 - Shared styles live in `assets/lesson.css`; every lesson/reference links it.
+- Reusable in-page quiz widget: `assets/quiz.js`. Data-driven — questions,
+  answers and feedback live in the lesson HTML (`data-quiz`, `data-answer`,
+  `data-why`); the script injects buttons, verdicts and the score. Micro-world
+  simulators use the shared `.sim` styles in `lesson.css` but keep their own
+  arithmetic inline in the lesson.
 - Glossary established in `reference/cuda-triton-glossary.html` — adhere to its
   terms in all future lessons (Grid, Block, Thread, Program instance, Tile,
   SPMD, Mask).
@@ -65,3 +70,17 @@
   — he only got the book reference + the one CUDA-execution-model screenshot
   from last night's webinar, not the slides. Draws the training-vs-inference
   line and maps fullstack instincts → inference. Next: Lesson 1.
+- 2026-07-27: Shipped Lesson 0002 (inference is the ongoing half) from the
+  Cloudflare *inference vs. training* explainer Zain brought. Takes its one
+  load-bearing sentence ("training … one-time expense … inference … ongoing")
+  and turns it into a roofline cost model. First **mechanism lesson** in the
+  lab: embedded micro-world (prefill/decode roofline simulator) + in-page quiz
+  widget. Earned two reusable assets — `assets/quiz.js` and the `.sim`/`.quiz`
+  styles — plus `reference/inference-roofline.html`.
+  Target misconception, reproduced and resolved inside the simulator:
+  *"inference is expensive because it's a lot of math."* Defaults show decode
+  math units 0.65% busy; INT4 at batch 1 is 4× faster with identical FLOPs.
+  All simulator claims checked numerically before shipping (0.65%, 35.3× at
+  batch 64, 4.00× INT4, 373-day crossover, COMPUTE flip at B=154 FP16 / B=39
+  INT4). Chat quiz (fresh variant) issued — **no learning record yet**; write
+  `records/0002-*` only after graded recall.

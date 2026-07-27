@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 2 — Inference is the half you pay for forever</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0002-inference-is-the-ongoing-half.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>"Training is a one-time expense." Now make that an engineering number.</h1>
+<p class="sub">Lesson 2 · reading the Cloudflare inference-vs-training article like a runtime engineer · your first cost model</p>
+
+<div class="ask">
+You brought <a href="https://www.cloudflare.com/learning/ai/inference-vs-training/">Cloudflare — AI inference
+vs. training</a>. It draws the same line <a href="0000-what-inference-actually-is.html">Lesson 0</a> drew, in the
+industry's standard words. This lesson takes its <b>one load-bearing sentence</b> and turns it into arithmetic you
+can run — because that sentence is the business case for the career you're building.
+</div>
+
+<h2>What the article gets right, in one line</h2>
+
+<blockquote>"Training an AI model can be very expensive in terms of compute power. But it is more or less a
+<b>one-time expense</b>. … Inference, however, is <b>ongoing</b>." — Cloudflare, <i>AI inference vs. training</i></blockquote>
+
+<p>That is the whole reason inference runtime engineering is a job. Training is a capital expense someone
+already paid. Inference is a bill that arrives every single day for as long as the product lives. A 10%
+kernel improvement on a one-time expense is a rounding error; a 10% improvement on a perpetual bill is a
+line item on someone's P&amp;L. <b>You are being hired against the recurring side.</b></p>
+
+<h2>Where the article stops, and your job starts</h2>
+
+<p>Cloudflare is a learning-centre explainer, not a runtime document. Read it for the vocabulary, then
+notice the three places it hands you a definition too coarse to engineer with:</p>
+
+<table>
+<tr><th>The article says</th><th>True, but…</th><th>What you must model instead</th></tr>
+<tr>
+  <td>Inference is "a trained model drawing conclusions from brand-new data" — a stop sign recognised, a
+      prediction made.</td>
+  <td>That's the <em>statistical</em> definition. It describes one classification: input in, answer out.</td>
+  <td>For an LLM, one request is <b>not</b> one forward pass. It is one <b>prefill</b> pass over the prompt,
+      then one forward pass <em>per output token</em>. A 256-token reply is 257 passes.</td>
+</tr>
+<tr>
+  <td>Inference "takes quite a bit of compute power and can be very expensive."</td>
+  <td>The bill is real, but "compute power" points at the wrong resource.</td>
+  <td>During decode, the GPU's math units sit near <b>idle</b>. The cost is <b>memory traffic</b>: re-reading
+      every weight out of HBM for each token.</td>
+</tr>
+<tr>
+  <td>Training is "more or less a one-time expense."</td>
+  <td>Per-model, yes.</td>
+  <td>Whether serving <em>passes</em> that one-time bill is a <b>tunable</b>, not a fact. It depends on batch
+      size and precision — the two knobs you're learning to turn.</td>
+</tr>
+</table>
+
+<p>None of this makes the article wrong. It makes it <em>upstream</em> of you. Your value starts exactly where
+its last paragraph ends.</p>
+
+<h2>The two phases hiding inside "an inference"</h2>
+
+<div class="compare">
+  <div class="c-cuda">
+    <h3>PREFILL — read the prompt</h3>
+    <ul>
+      <li>Runs <b>once</b> per request.</li>
+      <li>Processes all <em>P</em> prompt tokens together.</li>
+      <li>Big matmuls, weights read once for the whole prompt.</li>
+      <li>Lots of math per byte → usually <b>compute-bound</b>.</li>
+      <li>Sets your <b>time to first token</b>.</li>
+    </ul>
+  </div>
+  <div class="c-triton">
+    <h3>DECODE — write the reply</h3>
+    <ul>
+      <li>Runs <b>once per output token</b>.</li>
+      <li>Processes exactly <em>one</em> new token.</li>
+      <li>Same weights re-read from HBM <em>every single step</em>.</li>
+      <li>Almost no math per byte → <span class="keep">memory-bound</span>.</li>
+      <li>Sets your <b>tokens per second</b>.</li>
+    </ul>
+  </div>
+</div>
+
+<p>Two numbers decide which side a phase lands on. Both are ratios you already think in — you just call
+them "CPU-bound vs I/O-bound".</p>
+
+<figure>
+  <figcaption>The roofline test: compare the work's arithmetic intensity to the machine's balance point.</figcaption>
+  <p class="listen"><b>Listen first:</b> two ratios. The first is <em>arithmetic intensity</em> — floating-point
+  operations divided by bytes moved. It is a property of the work you are asking for. The second is
+  <em>machine balance</em> — the GPU's peak operations per second divided by its memory bandwidth. It is a
+  property of the hardware. On an A100 that is 312 trillion operations per second over 2039 gigabytes per
+  second, which comes out to about 153 operations per byte. The rule: if the work's intensity is below the
+  machine's balance, the kernel is memory-bound and the math units idle; if it is above, the kernel is
+  compute-bound.</p>
+  <pre aria-hidden="true"><code>arithmetic intensity = FLOPs performed / bytes moved      # property of the WORK
+machine balance      = peak FLOP/s / memory bandwidth     # property of the HARDWARE
+
+A100 80GB:  312e12 FLOP/s  /  2039e9 B/s  ≈  153 FLOP/byte
+
+intensity &lt; 153  →  MEMORY-bound   (math units idle, waiting on HBM)
+intensity &gt; 153  →  COMPUTE-bound  (math units saturated)</code></pre>
+</figure>
+
+<p>Now the punchline. In decode, a batch of <em>B</em> sequences does <code>2 × N × B</code> FLOPs while reading
+<code>N × bytes_per_weight</code> bytes, for an <em>N</em>-parameter model. The <em>N</em> cancels:</p>
+
+<figure>
+  <figcaption>Decode arithmetic intensity, with the parameter count cancelled out.</figcaption>
+  <p class="listen"><b>Listen first:</b> decode intensity equals two times the batch size, divided by the bytes
+  per weight. The model size disappears entirely. In FP16, two bytes per weight, that is simply the batch
+  size — so at batch one you get an intensity of one, against a machine that wants a hundred and fifty-three.
+  You are running the GPU at well under one percent of its math capability, and the only fixes available are
+  raising the batch size or shrinking the bytes per weight.</p>
+  <pre aria-hidden="true"><code>decode intensity = (2 × N × B) / (N × bytes_per_weight)
+                 =  2 × B / bytes_per_weight        # N cancels — model size is irrelevant!
+
+FP16 (2 bytes), batch 1  →  intensity 1     vs machine balance 153   ← 153x short
+FP16 (2 bytes), batch 64 →  intensity 64    vs 153                   ← still short
+INT4 (0.5 byte), batch 1 →  intensity 4     vs 153</code></pre>
+</figure>
+
+<p>Two consequences fall straight out of that one line, and they are the two levers the whole serving
+industry pulls: <b>raise B</b> (batching) and <b>shrink bytes_per_weight</b> (quantization — Netra Task A
+territory). Go feel them.</p>
+
+<h2>Micro-world: one request, all the way through</h2>
+
+<div class="sim" id="sim">
+  <h3>Roofline cost model — Llama-class model on one A100 80GB</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">Drive the knobs. Watch the <em>internal</em>
+  view: what each phase is bound by, and how idle the math units are.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="s-model">Model</label>
+      <select id="s-model">
+        <option value="0" selected>Llama 2 7B</option>
+        <option value="1">Llama 2 13B</option>
+        <option value="2">Llama 2 70B</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="s-prec">Weight precision</label>
+      <select id="s-prec">
+        <option value="2" selected>FP16 — 2 bytes/weight</option>
+        <option value="1">INT8 — 1 byte/weight</option>
+        <option value="0.5">INT4 — 0.5 byte/weight</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="s-prompt">Prompt tokens</label>
+      <select id="s-prompt">
+        <option value="128">128</option>
+        <option value="512" selected>512</option>
+        <option value="2048">2048</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="s-out">Output tokens</label>
+      <select id="s-out">
+        <option value="64">64</option>
+        <option value="256" selected>256</option>
+        <option value="1024">1024</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="s-batch">Batch size: <output id="s-batch-v">1</output></label>
+      <input type="range" id="s-batch" min="1" max="256" step="1" value="1">
+    </div>
+    <div class="ctl" style="flex:0 0 auto;align-self:flex-end">
+      <button type="button" class="reset" id="s-reset">Reset to defaults</button>
+    </div>
+  </div>
+
+  <table>
+    <caption class="vh">Per-phase roofline breakdown</caption>
+    <tr>
+      <th scope="col">Phase</th><th scope="col">FLOPs</th><th scope="col">Weight bytes read</th>
+      <th scope="col">Intensity</th><th scope="col">Bound by</th><th scope="col">Time</th>
+      <th scope="col">Math units busy</th>
+    </tr>
+    <tr>
+      <th scope="row">Prefill (×1)</th>
+      <td id="p-flops"></td><td id="p-bytes"></td><td id="p-ai"></td>
+      <td id="p-bound"></td><td id="p-time"></td><td id="p-util"></td>
+    </tr>
+    <tr>
+      <th scope="row">Decode (×1 token)</th>
+      <td id="d-flops"></td><td id="d-bytes"></td><td id="d-ai"></td>
+      <td id="d-bound"></td><td id="d-time"></td><td id="d-util"></td>
+    </tr>
+  </table>
+
+  <table>
+    <tr><th scope="row" style="width:52%">Time to first token</th><td id="r-ttft"></td></tr>
+    <tr><th scope="row">Output speed, per user</th><td id="r-usertps"></td></tr>
+    <tr><th scope="row">Output speed, whole GPU</th><td id="r-gputps"></td></tr>
+    <tr><th scope="row">GPU-seconds billed per request</th><td id="r-pergpu"></td></tr>
+    <tr><th scope="row">Requests until serving equals the <em>entire</em> training run</th><td id="r-cross"></td></tr>
+    <tr><th scope="row">…at 1,000,000 requests/day, that is</th><td id="r-days"></td></tr>
+  </table>
+
+  <p class="headline" id="s-headline" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Start at the defaults</b> (7B, FP16, batch 1). Read the decode row's "math units busy" figure.
+        That is the number that kills the phrase "inference is expensive because it's a lot of math."</li>
+    <li><b>Drag batch to 64.</b> Each decode step still takes the <em>same</em> time — but GPU-seconds per
+        request collapses. You got ~35× cheaper without making the hardware any faster.</li>
+    <li><b>Go back to batch 1 and switch to INT4.</b> Identical FLOPs, ~4× faster. Proof the bottleneck was
+        never arithmetic.</li>
+    <li><b>Hunt the flip.</b> At FP16, raise the batch until decode says COMPUTE-bound. Note the number. Now
+        do it again at INT4 — the flip arrives much sooner. Why?</li>
+    <li><b>Watch the last two rows.</b> At batch 1, serving burns Llama 2 7B's whole training bill in about a
+        year. At batch 64 it takes almost four decades. Cloudflare's "one-time expense" is true or false
+        depending on a slider <em>you</em> control.</li>
+  </ul>
+</div>
+
+<p style="font-size:.85rem;color:#6b6b6b">What this model deliberately ignores: the KV cache (which is what
+actually caps batch size in production), attention FLOPs, kernel launch overhead, and the fact that real
+kernels never hit peak. It is a <b>roofline estimate</b> — the same back-of-envelope a serving engineer does
+before writing code, not a benchmark. Weight-only quantization is assumed: weights stored narrow, math still
+done in FP16 after dequantization, which is why the peak-FLOPs figure does not change with precision.</p>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on what you just drove</h3>
+  <form>
+    <fieldset data-answer="c"
+      data-why="At batch 1 the decode step moves 14 GB of FP16 weights to do 14 GFLOPs of work — an intensity of 1 against a machine that wants 153. The math units finish almost instantly and then wait on HBM.">
+      <legend>1. At 7B / FP16 / batch 1, decode shows math units under 1% busy. What is the GPU doing?</legend>
+      <label><input type="radio" name="q1" value="a"> Saturating its math units with matrix multiplies.</label>
+      <label><input type="radio" name="q1" value="b"> Waiting for the next request to arrive.</label>
+      <label><input type="radio" name="q1" value="c"> Waiting for the weights to arrive from memory.</label>
+      <label><input type="radio" name="q1" value="d"> Recomputing the whole prompt for every output token.</label>
+    </fieldset>
+
+    <fieldset data-answer="a"
+      data-why="Decode is memory-bound, so its time is bytes ÷ bandwidth. Quartering the bytes per weight quarters the time. The FLOP count is completely unchanged — which is exactly what makes this the clean proof.">
+      <legend>2. Switching FP16 → INT4 at batch 1 makes decode roughly 4× faster. Why?</legend>
+      <label><input type="radio" name="q2" value="a"> Each token now reads a quarter of the weight bytes.</label>
+      <label><input type="radio" name="q2" value="b"> Each token now performs a quarter of the arithmetic.</label>
+      <label><input type="radio" name="q2" value="c"> The tensor cores run four times faster on 4-bit values.</label>
+      <label><input type="radio" name="q2" value="d"> The model now emits four output tokens per step.</label>
+    </fieldset>
+
+    <fieldset data-answer="d"
+      data-why="Serving cost per request is dominated by decode, and decode cost is amortised across the batch. Unbatched, the fleet passes the 184,320 GPU-hour training bill inside a year; at batch 64 the same traffic needs about 36 years. The claim is a tunable, not a fact.">
+      <legend>3. Cloudflare calls training "more or less a one-time expense." Sharpest correction?</legend>
+      <label><input type="radio" name="q3" value="a"> Training always costs more than serving, at any batch size.</label>
+      <label><input type="radio" name="q3" value="b"> Serving never catches up to the one-time training bill.</label>
+      <label><input type="radio" name="q3" value="c"> The model's parameter count alone decides which half dominates.</label>
+      <label><input type="radio" name="q3" value="d"> Batch size decides it: unbatched serving passes training within a year.</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+Training is <b>capex</b>, inference is <b>opex</b> — that's why the job exists. One LLM request is
+<b>prefill</b> (all P prompt tokens at once, compute-bound, sets time-to-first-token) plus <b>one decode pass
+per output token</b> (memory-bound, sets tokens/sec). Decode intensity is <code>2 × batch ÷ bytes_per_weight</code>
+— the model size cancels — versus an A100 balance of <b>~153 FLOP/byte</b>. At batch 1 in FP16 that's
+<b>1 vs 153</b>: the math units are &lt;1% busy and the GPU is just re-reading weights out of HBM. So the two
+levers are <b>batching</b> (raise B) and <b>quantization</b> (shrink the bytes).
+</div>
+
+<h2>Why this is the right lesson before the current problem</h2>
+<p>Every technique on your <a href="../MISSION.md">mission</a> list is one of those two levers, or a way to
+buy back the memory traffic they cost:</p>
+<ul>
+  <li><b>Quantization / NF4 dequantization</b> (Netra Task A) — shrink <code>bytes_per_weight</code>. You now
+      know precisely why that speeds up decode and barely touches prefill.</li>
+  <li><b>Batching, continuous batching</b> — raise <em>B</em> toward the balance point.</li>
+  <li><b>KV cache</b> — the thing that stops you raising <em>B</em>, and the next mechanism worth a lesson.</li>
+  <li><b>Kernel fusion, and Triton itself</b> — fewer round-trips to HBM per op. Memory-bound work is exactly
+      where a fused kernel wins.</li>
+</ul>
+<p>That is also why <a href="0001-thread-block-grid-in-triton.html">Lesson 1</a>'s vector add is the right
+first kernel: elementwise add is the purest memory-bound kernel there is. Its arithmetic intensity is about
+1 FLOP per 12 bytes. When <a href="../experiments/0001-vector-add-on-t4/">Experiment 0001</a> reports GB/s
+instead of TFLOP/s, this lesson is the reason.</p>
+
+<h2>Primary source</h2>
+<p>Read <a href="https://www.cloudflare.com/learning/ai/inference-vs-training/">Cloudflare — AI inference vs.
+training</a> (~5 min) for the vocabulary and the "ongoing vs one-time" framing. Trust it as an orientation
+piece (★★★☆☆), not as a runtime reference — everything below the token level in this lesson comes from the
+<a href="https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf">A100
+datasheet</a> (312 TFLOP/s FP16, 2039 GB/s) and the
+<a href="https://arxiv.org/abs/2307.09288">Llama 2 paper</a>, Table 2 (7B: 184,320 A100-hours).</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. The obvious next one:
+<em>"what actually stops me setting batch to 153?"</em> The answer is the KV cache, and it's the next lesson
+whenever you want it.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="../reference/inference-roofline.html">Reference: the inference cost model on one page</a> — the formulas above, compressed.</li>
+  <li><a href="0000-what-inference-actually-is.html">Lesson 0 — What inference actually is</a> (the split this lesson quantifies)</li>
+  <li><a href="0001-thread-block-grid-in-triton.html">Lesson 1 — Triton deletes a level</a> (how you'd actually write the kernel)</li>
+</ul>
+
+<p class="foot">Lesson 2 · Zain's AI Inference Lab · sources: cloudflare.com/learning/ai, NVIDIA A100 datasheet, Llama 2 (arXiv:2307.09288)</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: roofline cost model. Deterministic, inline, no dependencies. */
+(function () {
+  'use strict';
+
+  var PEAK = 312e12;   // A100 80GB SXM, FP16 tensor core, dense (NVIDIA datasheet)
+  var BW   = 2039e9;   // A100 80GB HBM2e bandwidth, bytes/s
+  var BALANCE = PEAK / BW;                       // ≈153 FLOP/byte
+
+  var MODELS = [
+    { label: 'Llama 2 7B',  N: 7e9,  trainHours: 184320  },
+    { label: 'Llama 2 13B', N: 13e9, trainHours: 368640  },
+    { label: 'Llama 2 70B', N: 70e9, trainHours: 1720320 }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  function eng(x, unit) {                        // 1.23 GFLOP style
+    var u = ['', 'K', 'M', 'G', 'T', 'P', 'E'], i = 0;
+    while (x >= 1000 && i < u.length - 1) { x /= 1000; i++; }
+    return (x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : Math.round(x)) + ' ' + u[i] + unit;
+  }
+  function secs(t) {
+    if (t < 1e-3) return (t * 1e6).toFixed(1) + ' µs';
+    if (t < 1)    return (t * 1e3).toFixed(2) + ' ms';
+    return t.toFixed(2) + ' s';
+  }
+  function count(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + ' billion';
+    if (n >= 1e6) return (n / 1e6).toFixed(0) + ' million';
+    return Math.round(n).toLocaleString('en-US');
+  }
+  function span(bound) {
+    return '<span class="phase ' + (bound === 'compute' ? 'cmp' : 'mem') + '">' +
+           (bound === 'compute' ? 'COMPUTE' : 'MEMORY') + '</span>';
+  }
+  function phase(flops, bytes) {
+    var tC = flops / PEAK, tM = bytes / BW, t = Math.max(tC, tM);
+    return {
+      flops: flops, bytes: bytes, t: t,
+      ai: flops / bytes,
+      bound: tC >= tM ? 'compute' : 'memory',
+      util: (flops / t) / PEAK
+    };
+  }
+
+  function render() {
+    var m    = MODELS[+$('s-model').value];
+    var bpp  = +$('s-prec').value;
+    var P    = +$('s-prompt').value;
+    var O    = +$('s-out').value;
+    var B    = +$('s-batch').value;
+    $('s-batch-v').textContent = B;
+
+    var wbytes = m.N * bpp;                      // weights streamed once per pass
+    var pre = phase(2 * m.N * P * B, wbytes);
+    var dec = phase(2 * m.N * B,     wbytes);
+
+    $('p-flops').textContent = eng(pre.flops, 'FLOP');
+    $('p-bytes').textContent = eng(pre.bytes, 'B');
+    $('p-ai').textContent    = pre.ai.toFixed(1) + ' F/B';
+    $('p-bound').innerHTML   = span(pre.bound);
+    $('p-time').textContent  = secs(pre.t);
+    $('p-util').textContent  = (pre.util * 100).toFixed(1) + '%';
+
+    $('d-flops').textContent = eng(dec.flops, 'FLOP');
+    $('d-bytes').textContent = eng(dec.bytes, 'B');
+    $('d-ai').textContent    = dec.ai.toFixed(1) + ' F/B';
+    $('d-bound').innerHTML   = span(dec.bound);
+    $('d-time').textContent  = secs(dec.t);
+    $('d-util').textContent  = (dec.util * 100).toFixed(2) + '%';
+
+    var batchTime = pre.t + O * dec.t;           // one batch, start to finish
+    var perReq    = batchTime / B;               // GPU-seconds billed to one request
+    var crossover = (m.trainHours * 3600) / perReq;
+
+    $('r-ttft').textContent   = secs(pre.t);
+    $('r-usertps').textContent = (1 / dec.t).toFixed(1) + ' tokens/s';
+    $('r-gputps').textContent  = (B / dec.t).toFixed(0) + ' tokens/s across ' + B +
+                                 (B === 1 ? ' sequence' : ' sequences');
+    $('r-pergpu').textContent  = secs(perReq);
+    $('r-cross').textContent   = count(crossover) + ' requests  (training was ' +
+                                 m.trainHours.toLocaleString('en-US') + ' A100-hours)';
+    var days = crossover / 1e6;
+    $('r-days').textContent    = days < 1000
+      ? Math.round(days) + ' days'
+      : (days / 365).toFixed(0) + ' years';
+
+    var msg;
+    if (dec.bound === 'memory') {
+      msg = '<b>Decode is MEMORY-bound.</b> Intensity ' + dec.ai.toFixed(1) +
+            ' FLOP/byte against a machine that wants ' + BALANCE.toFixed(0) +
+            '. The math units are ' + (dec.util * 100).toFixed(2) +
+            '% busy — the GPU is re-reading ' + eng(wbytes, 'B') +
+            ' of weights for every single token. Raise the batch or shrink the weights.';
+    } else {
+      msg = '<b>Decode is COMPUTE-bound.</b> Intensity ' + dec.ai.toFixed(1) +
+            ' FLOP/byte has passed the machine balance of ' + BALANCE.toFixed(0) +
+            '. The math units are ' + (dec.util * 100).toFixed(0) +
+            '% busy — the weight re-reads are now fully hidden behind arithmetic. ' +
+            'This is what "using the GPU you paid for" looks like.';
+    }
+    $('s-headline').innerHTML = msg;
+  }
+
+  ['s-model', 's-prec', 's-prompt', 's-out', 's-batch'].forEach(function (id) {
+    $(id).addEventListener('input', render);
+  });
+  $('s-reset').addEventListener('click', function () {
+    $('s-model').value = '0'; $('s-prec').value = '2';
+    $('s-prompt').value = '512'; $('s-out').value = '256'; $('s-batch').value = '1';
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

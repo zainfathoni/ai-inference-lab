@@ -73,6 +73,18 @@ benchmarks, and real codebases over generic roadmaps.
     one subsystem at a time, such as weight loading, feature caching, or a single
     backend kernel family.
 
+## Hardware & cost-model numbers (cite these, don't guess)
+
+- **[NVIDIA A100 Tensor Core GPU datasheet](https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf)**
+  - Trust: ★★★★★ (vendor primary). A100 80GB SXM: **312 TFLOP/s** FP16 tensor
+    core (dense; 624 with sparsity), **2039 GB/s** HBM2e. Those two numbers give
+    the machine balance of **≈153 FLOP/byte** used throughout Lesson 0002.
+- **[Llama 2: Open Foundation and Fine-Tuned Chat Models](https://arxiv.org/abs/2307.09288)** — Meta (arXiv:2307.09288)
+  - Trust: ★★★★★ (primary). **Table 2** is the citable training-capex number:
+    7B = 184,320 A100-80GB GPU-hours, 13B = 368,640, 70B = 1,720,320,
+    total 3,311,616. Used as the denominator in the training-vs-serving
+    crossover.
+
 ## Background on the CUDA model (the diagram)
 
 - **[Thread block (CUDA programming) — Wikipedia](https://en.wikipedia.org/wiki/Thread_block_(CUDA_programming))**
@@ -81,6 +93,15 @@ benchmarks, and real codebases over generic roadmaps.
 
 ## Secondary (orientation, read with care)
 
+- **[AI inference vs. training: What is AI inference?](https://www.cloudflare.com/learning/ai/inference-vs-training/)** — Cloudflare Learning Center
+  - Trust: ★★★☆☆. Correct, standard industry vocabulary for the training /
+    inference split, and the source of the framing sentence Lesson 0002 is built
+    on: training is "more or less a **one-time expense**", inference "however, is
+    **ongoing**." Treat as orientation only — it defines inference statistically
+    ("drawing conclusions from brand-new data"), never mentions prefill vs
+    decode, and calls the serving bottleneck "compute power" when for LLM decode
+    it is memory bandwidth. Blocks automated fetching (HTTP 403); read in a
+    browser or via an archive snapshot.
 - **[Triton Is Not CUDA in Python — It's a Tiling DSL](https://medium.com/@varuntej07/triton-is-not-cuda-in-python-its-a-tiling-dsl-c65c15ce3c46)** — Medium
   - Trust: ★★★☆☆. Useful framing ("one program processes a whole tile, not
     one value"), but verify any claim against the official docs above.

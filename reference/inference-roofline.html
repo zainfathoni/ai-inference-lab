@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference — The inference cost model on one page</title>
+<link rel="canonical" href="https://ai.zainf.dev/reference/inference-roofline.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+<style>
+  @media print { body { margin:0; max-width:none; background:#fff; } a { color:#000; text-decoration:none; } }
+  body { max-width:46rem; }
+  h2 { margin-top:1.6rem; }
+</style>
+</head>
+<body>
+<a class="skip" href="#ref-main">Skip to reference content</a>
+<main id="ref-main">
+
+<h1>The inference cost model, on one page</h1>
+<p class="sub">Reference · roofline arithmetic for LLM serving · the back-of-envelope you do before writing a kernel</p>
+
+<h2>The one-line model</h2>
+<div class="defense">
+<b>Prefill</b> runs once over all P prompt tokens → compute-bound → sets time-to-first-token.&nbsp;
+<b>Decode</b> runs once per output token, re-reading every weight from HBM → memory-bound → sets tokens/sec.
+Decode intensity is <code>2 × B ÷ bytes_per_weight</code>; the model size cancels.
+</div>
+
+<h2>Glossary (adhere to this in every lesson)</h2>
+<table>
+<tr><th>Term</th><th>Meaning</th></tr>
+<tr><td><b>Prefill</b></td><td>The single forward pass over the whole prompt at the start of a request. Large matmuls; weights read once for all P tokens.</td></tr>
+<tr><td><b>Decode</b></td><td>One forward pass per generated token. Each pass re-reads the full weight set for one new token per sequence.</td></tr>
+<tr><td><b>TTFT</b></td><td>Time to first token — essentially the prefill time. The latency the user feels before anything appears.</td></tr>
+<tr><td><b>Arithmetic intensity</b></td><td>FLOPs performed ÷ bytes moved. A property of <em>the work</em>. Units: FLOP/byte.</td></tr>
+<tr><td><b>Machine balance</b></td><td>Peak FLOP/s ÷ memory bandwidth. A property of <em>the hardware</em>. A100: ≈153 FLOP/byte.</td></tr>
+<tr><td><b>Memory-bound</b></td><td>Intensity below machine balance. Time = bytes ÷ bandwidth. Math units idle. Fix by moving fewer bytes.</td></tr>
+<tr><td><b>Compute-bound</b></td><td>Intensity above machine balance. Time = FLOPs ÷ peak. Fix by doing less arithmetic (or using faster units).</td></tr>
+<tr><td><b>Roofline</b></td><td>The model that says runtime = max(compute time, memory time). Deliberately optimistic; a floor on time, not a benchmark.</td></tr>
+<tr><td><b>HBM</b></td><td>High-bandwidth memory — the GPU's off-chip DRAM. Fast in absolute terms, still the decode bottleneck.</td></tr>
+<tr><td><b>Weight-only quantization</b></td><td>Store weights narrow (INT8/INT4/NF4), dequantize to FP16 for the math. Cuts bytes, not FLOPs — which is why it helps decode and barely helps prefill.</td></tr>
+<tr><td><b>KV cache</b></td><td>Per-sequence cached attention keys/values. Grows with batch × context, and is what caps B in practice.</td></tr>
+</table>
+
+<h2>The formulas</h2>
+
+<figure>
+  <figcaption>The full roofline chain for an N-parameter model, batch B, prompt P, output O.</figcaption>
+  <p class="listen"><b>Listen first:</b> six steps. One, weight bytes equals the parameter count times bytes
+  per weight. Two, prefill floating-point operations equal two times parameters times prompt length times
+  batch. Three, decode operations per step equal two times parameters times batch. Four, each phase's time is
+  the larger of its operations divided by peak throughput, and its bytes divided by bandwidth — whichever
+  resource is slower wins. Five, the whole batch takes prefill time plus output length times decode step
+  time, and per-request cost is that divided by the batch size. Six, the crossover point is total training
+  seconds divided by per-request seconds — how many requests it takes for serving to cost what training
+  cost.</p>
+  <pre aria-hidden="true"><code>W_bytes   = N × bytes_per_weight              # weights streamed once per pass
+
+F_prefill = 2 × N × P × B                     # whole prompt, whole batch
+F_decode  = 2 × N × B                         # ONE new token per sequence
+
+t_phase   = max( F / PEAK_FLOPS ,  W_bytes / BANDWIDTH )   # roofline
+
+t_batch   = t_prefill + O × t_decode
+t_request = t_batch / B                       # GPU-seconds billed per request
+
+crossover = training_GPU_seconds / t_request  # requests until serving = training</code></pre>
+</figure>
+
+<h2>The numbers worth memorizing (A100 80GB SXM)</h2>
+<table>
+<tr><th>Quantity</th><th>Value</th><th>Why it matters</th></tr>
+<tr><td>Peak FP16 tensor-core throughput</td><td>312 TFLOP/s</td><td>Numerator of machine balance.</td></tr>
+<tr><td>HBM2e bandwidth</td><td>2039 GB/s</td><td>Denominator. The decode bottleneck.</td></tr>
+<tr><td><b>Machine balance</b></td><td><b>≈153 FLOP/byte</b></td><td>The line every kernel is judged against.</td></tr>
+<tr><td>Batch to make FP16 decode compute-bound</td><td>≈154</td><td><code>2B/2 &gt; 153</code>. Below it you are wasting silicon.</td></tr>
+<tr><td>Batch to make INT4 decode compute-bound</td><td>≈39</td><td><code>2B/0.5 &gt; 153</code>. Quantization gets you there 4× sooner.</td></tr>
+<tr><td>Llama 2 7B decode, FP16, batch 1</td><td>6.9 ms/token · 0.65% math busy</td><td>The canonical "the GPU is idle and still slow" data point.</td></tr>
+<tr><td>Llama 2 7B pretraining</td><td>184,320 A100-hours</td><td>The capex number serving is measured against.</td></tr>
+</table>
+<p class="srcline">
+  <a class="gh" href="https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf" aria-label="Open the NVIDIA A100 tensor core GPU datasheet PDF">NVIDIA A100 datasheet↗</a>
+  <a class="gh" href="https://arxiv.org/abs/2307.09288" aria-label="Open the Llama 2 paper on arXiv, Table 2 has pretraining GPU hours">Llama 2, Table 2↗</a>
+</p>
+
+<h2>The decision table</h2>
+<table>
+<tr><th>Symptom</th><th>What it means</th><th>Lever</th></tr>
+<tr><td>Low tokens/sec, math units near idle</td><td>Decode is memory-bound (the normal case)</td><td>Raise batch size; quantize weights; fuse kernels to cut HBM round-trips.</td></tr>
+<tr><td>Slow time-to-first-token</td><td>Prefill is compute-bound and the prompt is long</td><td>Chunked prefill, prompt caching, better matmul kernels.</td></tr>
+<tr><td>Can't raise batch size</td><td>KV cache has eaten the HBM</td><td>Paged/quantized KV cache, shorter contexts, bigger GPU.</td></tr>
+<tr><td>Quantized and prefill barely improved</td><td>Expected — quantization cuts bytes, not FLOPs</td><td>Nothing wrong. Measure decode, not the whole request.</td></tr>
+</table>
+
+<h2>Health warnings</h2>
+<ul>
+  <li>The roofline is a <b>lower bound on time</b>. Real kernels miss peak; a 60–70% match is a good kernel.</li>
+  <li>Attention FLOPs and KV-cache traffic are excluded here — they grow with context length and eventually stop being ignorable.</li>
+  <li>Peak FLOP/s is quoted <em>dense</em>. Sparsity figures (624 TFLOP/s) apply only to structured-sparse models.</li>
+  <li>A crossover number is a compute-time comparison, not a dollar comparison — training and serving hardware are rented differently.</li>
+</ul>
+
+<p class="ask">💬 Ask your teacher to expand any row of these tables into its own lesson. The KV cache row is the
+one that is overdue.</p>
+
+<h2>Where this comes from</h2>
+<ul>
+  <li><a href="../lessons/0002-inference-is-the-ongoing-half.html">Lesson 2 — Inference is the half you pay for forever</a> (has the interactive version of this page)</li>
+  <li><a href="cuda-triton-glossary.html">Reference — CUDA ↔ Triton cheat-sheet</a></li>
+</ul>
+
+<p class="foot">Reference · Zain's AI Inference Lab · sources: NVIDIA A100 datasheet, Llama 2 (arXiv:2307.09288)</p>
+</main>
+</body>
+</html>

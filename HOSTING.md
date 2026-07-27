@@ -39,8 +39,11 @@ URL path.
 | `index.html` | `https://ai.zainf.dev/` |
 | `lessons/0000-what-inference-actually-is.html` | `https://ai.zainf.dev/lessons/0000-what-inference-actually-is.html` |
 | `lessons/0001-thread-block-grid-in-triton.html` | `https://ai.zainf.dev/lessons/0001-thread-block-grid-in-triton.html` |
+| `lessons/0002-inference-is-the-ongoing-half.html` | `https://ai.zainf.dev/lessons/0002-inference-is-the-ongoing-half.html` |
 | `reference/cuda-triton-glossary.html` | `https://ai.zainf.dev/reference/cuda-triton-glossary.html` |
+| `reference/inference-roofline.html` | `https://ai.zainf.dev/reference/inference-roofline.html` |
 | `assets/lesson.css` | `https://ai.zainf.dev/assets/lesson.css` |
+| `assets/quiz.js` | `https://ai.zainf.dev/assets/quiz.js` |
 | `assets/<file>` | `https://ai.zainf.dev/assets/<file>` |
 
 ### Generated from Markdown (edit the `.md`, never the `index.html`)
