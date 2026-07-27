@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 3 — A tensor is a pointer plus arithmetic</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0003-strides-and-layout.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>Shape is a lie your framework tells you</h1>
+<p class="sub">Lesson 3 · strides and layout · the arithmetic underneath every <code>tl.load</code></p>
+
+<div class="ask">
+<a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a> proved your kernels are usually
+memory-bound. So the next question is the only one that matters: <b>which bytes, in what order?</b>
+That is decided entirely by strides — and once you see them, a whole class of mysterious 5× slowdowns
+stops being mysterious.
+</div>
+
+<h2>The definition that replaces the mystery</h2>
+
+<p>A tensor is four things, and only one of them is data:</p>
+
+<table>
+<tr><th>Part</th><th>What it is</th><th>Your analogy</th></tr>
+<tr><td><b>data pointer</b></td><td>One flat, 1-D block of memory.</td><td>A <code>malloc</code>'d buffer. That's it.</td></tr>
+<tr><td><b>shape</b></td><td>How you'd <em>like</em> to index it, e.g. <code>(4, 6)</code>.</td><td>Pure metadata. Costs nothing, moves nothing.</td></tr>
+<tr><td><b>strides</b></td><td>How far to step, in elements, per index.</td><td>The multipliers in your address arithmetic.</td></tr>
+<tr><td><b>dtype</b></td><td>How many bytes one element takes.</td><td>The scale factor from elements to bytes.</td></tr>
+</table>
+
+<p>There is no 2-D memory. There never was. There is a line of bytes and a formula:</p>
+
+<figure>
+  <figcaption>The address formula: a logical index becomes a linear offset via the strides.</figcaption>
+  <p class="listen"><b>Listen first:</b> the offset of logical position i, j equals i times stride zero plus
+  j times stride one. For a normal row-major tensor of shape four by six, stride zero is six and stride one
+  is one — stepping down a row jumps six elements, stepping across a column jumps one. So element two,
+  three lives at two times six plus three, which is fifteen. That is the whole idea: shape tells you what
+  is legal to ask for, strides tell you where it actually is.</p>
+  <pre aria-hidden="true"><code>offset(i, j) = i * stride[0] + j * stride[1]      # in ELEMENTS, not bytes
+
+shape   = (4, 6)          # row-major, contiguous
+strides = (6, 1)          # down a row = +6,  across a column = +1
+
+offset(2, 3) = 2*6 + 3*1 = 15</code></pre>
+</figure>
+
+<p>Now the part that pays your rent. <b>Transposing does not move data.</b> It swaps the shape and swaps
+the strides, and returns a view onto the same buffer:</p>
+
+<figure>
+  <figcaption>Transpose as a metadata edit: shape and strides swap, the buffer is untouched.</figcaption>
+  <p class="listen"><b>Listen first:</b> after a transpose the shape becomes six by four and the strides
+  become one and six. Not a single byte was copied. But notice what happened to the inner dimension: the
+  stride along a row used to be one, and now it is six. Walking across a row of the transposed view means
+  jumping six elements at a time through memory, which is exactly the access pattern that wrecks
+  bandwidth.</p>
+  <pre aria-hidden="true"><code>x            shape (4, 6)   strides (6, 1)   contiguous
+x.T          shape (6, 4)   strides (1, 6)   NOT contiguous — zero bytes copied
+
+# the inner stride went 1 -> 6.  Reading a row is now a stride-6 walk.</code></pre>
+</figure>
+
+<h2>Why Triton kernels take strides as arguments</h2>
+
+<p>In <a href="0001-thread-block-grid-in-triton.html">Lesson 1</a> the vector-add kernel computed
+<code>offsets = block_start + tl.arange(0, BLOCK_SIZE)</code> — a 1-D case where the stride is 1 and
+invisible. The moment you write a 2-D kernel, the stride stops being invisible and becomes a parameter
+you are handed:</p>
+
+<figure>
+  <figcaption>A 2-D Triton kernel: the caller passes strides, and the kernel does the address arithmetic.</figcaption>
+  <p class="listen"><b>Listen first:</b> the kernel takes a pointer plus two strides, <code>stride_m</code>
+  and <code>stride_n</code>. It builds a row range and a column range with <code>tl.arange</code>, then
+  forms a two-dimensional block of addresses: row offsets times <code>stride_m</code>, added to column
+  offsets times <code>stride_n</code>. The colon-None and None-colon indexing is broadcasting — turning
+  two 1-D ranges into a 2-D tile of addresses. The important point is that the kernel never assumes the
+  data is contiguous. It is told the strides, so the same kernel works on a normal tensor and on a
+  transposed view — at very different speeds.</p>
+  <pre aria-hidden="true"><code>@triton.jit
+def kernel(x_ptr, stride_m, stride_n, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr):
+    rm = tl.arange(0, BLOCK_M)                    # row offsets
+    rn = tl.arange(0, BLOCK_N)                    # column offsets
+    ptrs = x_ptr + rm[:, None] * stride_m + rn[None, :] * stride_n
+    tile = tl.load(ptrs)                          # a 2-D tile of addresses
+
+# The SAME kernel runs on x and on x.T — you just pass different strides.
+# Same correctness. Wildly different speed.</code></pre>
+</figure>
+
+<blockquote>This is the single most useful thing to internalise about Triton: <b>you own the addresses.</b>
+The compiler will happily coalesce, vectorise and swizzle — but only around the access pattern you
+described. It cannot fix a stride you chose.</blockquote>
+
+<h2>Micro-world: watch the address arithmetic happen</h2>
+
+<div class="sim" id="lsim">
+  <h3>Logical index → linear memory</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">The top grid is the shape you think in. The
+  strip below it is the one flat buffer that actually exists. Click any cell to see the arithmetic.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="l-rows">Rows: <output id="l-rows-v">4</output></label>
+      <input type="range" id="l-rows" min="2" max="6" step="1" value="4">
+    </div>
+    <div class="ctl">
+      <label for="l-cols">Columns: <output id="l-cols-v">6</output></label>
+      <input type="range" id="l-cols" min="2" max="8" step="1" value="6">
+    </div>
+    <div class="ctl">
+      <label for="l-view">View</label>
+      <select id="l-view">
+        <option value="c" selected>x — contiguous</option>
+        <option value="t">x.T — transposed view</option>
+        <option value="s">x[:, ::2] — every other column</option>
+      </select>
+    </div>
+  </div>
+
+  <p class="axcap">Logical view — what your code indexes</p>
+  <div class="lgrid" id="l-grid"></div>
+
+  <p class="axcap">Physical memory — the one buffer that exists (element offsets)</p>
+  <div class="mem" id="l-mem"></div>
+
+  <div class="btnrow">
+    <button type="button" class="reset" id="l-walkrow">Walk one row →</button>
+    <button type="button" class="reset" id="l-walkcol">Walk one column ↓</button>
+    <button type="button" class="reset" id="l-clear">Clear the walk</button>
+  </div>
+
+  <div class="readout" id="l-readout"></div>
+  <p class="verdict-bar" id="l-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Click around the contiguous view.</b> Offsets increase by 1 across a row and by "columns" down
+        a column. Nothing surprising — which is exactly why the next step lands.</li>
+    <li><b>Switch to <code>x.T</code> and press "Walk one row".</b> The logical row is still four
+        neighbouring cells. In memory, they are six apart. Same data, same bytes, completely different
+        access pattern.</li>
+    <li><b>Now press "Walk one column" on <code>x.T</code>.</b> Suddenly it is contiguous again. Transposing
+        did not make the tensor slow — it swapped <em>which</em> traversal is fast.</li>
+    <li><b>Try <code>x[:, ::2]</code>.</b> A slice with no copy either: the inner stride becomes 2 and the
+        buffer stays exactly the same size. Half the elements are simply never addressed.</li>
+    <li><b>Shrink columns to 2 and re-walk the transposed row.</b> The gaps shrink with the stride. Stride
+        is not "bad" — <em>large</em> stride is bad, and how large depends on your shape.</li>
+  </ul>
+</div>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on layout</h3>
+  <form>
+    <fieldset data-answer="c"
+      data-why="offset = i*stride0 + j*stride1 = 2*6 + 3*1 = 15. The row stride is the number of columns, because that is how far you jump to land on the same column one row down.">
+      <legend>1. A <code>(4, 6)</code> row-major tensor. What is the element offset of logical index <code>(2, 3)</code>?</legend>
+      <label><input type="radio" name="q1" value="a"> 5</label>
+      <label><input type="radio" name="q1" value="b"> 9</label>
+      <label><input type="radio" name="q1" value="c"> 15</label>
+      <label><input type="radio" name="q1" value="d"> 23</label>
+    </fieldset>
+
+    <fieldset data-answer="b"
+      data-why="A transpose is a metadata edit. Shape (4,6) becomes (6,4) and strides (6,1) become (1,6), pointing at the same buffer. The cost shows up later, in the access pattern, not at the moment you write .T">
+      <legend>2. You take <code>x.T</code> of that tensor. How many bytes are copied?</legend>
+      <label><input type="radio" name="q2" value="a"> All 96 of them, into a fresh buffer.</label>
+      <label><input type="radio" name="q2" value="b"> None — the shape and strides swap.</label>
+      <label><input type="radio" name="q2" value="c"> Half, because the diagonal stays put.</label>
+      <label><input type="radio" name="q2" value="d"> It depends on the dtype's alignment.</label>
+    </fieldset>
+
+    <fieldset data-answer="a"
+      data-why="After the swap the inner stride is 6, so consecutive elements of a logical row sit 6 elements apart in the buffer. That is the scattered pattern the next lesson shows the hardware bill for.">
+      <legend>3. Reading one row of that transposed view touches memory how?</legend>
+      <label><input type="radio" name="q3" value="a"> In steps of six elements, so the reads scatter.</label>
+      <label><input type="radio" name="q3" value="b"> Contiguously, exactly as it did before.</label>
+      <label><input type="radio" name="q3" value="c"> In reverse order, but still packed together.</label>
+      <label><input type="radio" name="q3" value="d"> Not at all until you call <code>.contiguous()</code>.</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+A tensor is a <b>flat buffer + shape + strides + dtype</b>. Memory is 1-D; shape is metadata;
+<code>offset = Σ index[k] * stride[k]</code> in elements. <b>Transpose and slicing are free</b> — they
+swap or scale strides and copy nothing — but they change the <em>inner stride</em>, and the inner stride
+is what decides whether a read is one packed burst or many scattered ones. Triton kernels take strides as
+arguments precisely because <b>you own the addresses</b>; the compiler optimises around the pattern you
+chose, it cannot choose a better one for you.
+</div>
+
+<h2>Primary source</h2>
+<p>Read <a href="https://pytorch.org/docs/stable/generated/torch.Tensor.stride.html">torch.Tensor.stride</a>
+and then <a href="https://pytorch.org/docs/stable/generated/torch.Tensor.is_contiguous.html">is_contiguous</a>
+(~5 min together). Then, in any Python REPL with torch: make a tensor, print
+<code>.shape</code>, <code>.stride()</code> and <code>.is_contiguous()</code>, transpose it, and print
+them again. Thirty seconds of that beats any amount of reading.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. Good next question:
+<em>"when is <code>.contiguous()</code> worth the copy?"</em> The answer is a bandwidth calculation, and
+you already have the tools for it from Lesson 2.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="0004-memory-coalescing.html">Lesson 4 — The GPU fetches more than you asked for</a> — the hardware bill for the strides you just chose.</li>
+  <li><a href="../reference/inference-roofline.html">Reference: the inference cost model</a></li>
+</ul>
+
+<p class="foot">Lesson 3 · Zain's AI Inference Lab · source: PyTorch tensor docs</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: logical index -> linear offset, and what a traversal touches. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var hot = { i: 0, j: 0 };
+  var walk = [];                                  // logical cells highlighted by a traversal
+
+  function layout() {
+    var R = +$('l-rows').value, C = +$('l-cols').value, v = $('l-view').value;
+    // x is (R,C) strides (C,1); x.T is (C,R) strides (1,C) — the inner stride becomes C.
+    if (v === 't')  return { R: C, C: R, s0: 1, s1: C, name: 'x.T', expr: 'x.T', base: [R, C] };
+    if (v === 's')  return { R: R, C: Math.ceil(C / 2), s0: C, s1: 2, name: 'x[:, ::2]',
+                             expr: 'x[:, ::2]', base: [R, C] };
+    return { R: R, C: C, s0: C, s1: 1, name: 'x', expr: 'x', base: [R, C] };
+  }
+  function off(L, i, j) { return i * L.s0 + j * L.s1; }
+
+  function render() {
+    var L = layout();
+    $('l-rows-v').textContent = $('l-rows').value;
+    $('l-cols-v').textContent = $('l-cols').value;
+    if (hot.i >= L.R) hot.i = L.R - 1;
+    if (hot.j >= L.C) hot.j = L.C - 1;
+
+    var grid = $('l-grid');
+    while (grid.firstChild) grid.removeChild(grid.firstChild);
+    grid.style.gridTemplateColumns = 'repeat(' + L.C + ', 34px)';
+    for (var i = 0; i < L.R; i++) {
+      for (var j = 0; j < L.C; j++) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = i + ',' + j;
+        var isHot = (i === hot.i && j === hot.j);
+        var inWalk = walk.some(function (w) { return w[0] === i && w[1] === j; });
+        b.className = isHot ? 'hot' : (inWalk ? 'touched' : '');
+        b.setAttribute('aria-label',
+          'Logical ' + i + ', ' + j + ' — memory offset ' + off(L, i, j));
+        (function (a, c) {
+          b.addEventListener('click', function () { hot = { i: a, j: c }; walk = []; render(); });
+        })(i, j);
+        grid.appendChild(b);
+      }
+    }
+
+    // The physical buffer never changes size or order — only which cells get addressed.
+    var total = L.base[0] * L.base[1];
+    var mem = $('l-mem');
+    while (mem.firstChild) mem.removeChild(mem.firstChild);
+    var hotOff = off(L, hot.i, hot.j);
+    var walkOffs = walk.map(function (w) { return off(L, w[0], w[1]); });
+    for (var k = 0; k < total; k++) {
+      var c2 = document.createElement('div');
+      c2.className = 'm' + (k === hotOff ? ' hot' : (walkOffs.indexOf(k) >= 0 ? ' touched' : ''));
+      c2.textContent = k;
+      mem.appendChild(c2);
+    }
+
+    var ro = $('l-readout');
+    while (ro.firstChild) ro.removeChild(ro.firstChild);
+    [['view     = ', L.expr + '   (base buffer is always ' + total + ' elements)'],
+     ['shape    = ', '(' + L.R + ', ' + L.C + ')'],
+     ['strides  = ', '(' + L.s0 + ', ' + L.s1 + ')   ' +
+                     (L.s1 === 1 && L.s0 === L.C ? '→ contiguous' : '→ NOT contiguous')],
+     ['offset   = ', hot.i + '*' + L.s0 + ' + ' + hot.j + '*' + L.s1 + ' = ' + hotOff]
+    ].forEach(function (row) {
+      var k2 = document.createElement('span'); k2.className = 'k'; k2.textContent = row[0];
+      ro.appendChild(k2);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+
+    var v = $('l-verdict');
+    if (!walk.length) {
+      v.className = 'verdict-bar safe';
+      v.textContent = 'Logical (' + hot.i + ', ' + hot.j + ') lives at element ' + hotOff +
+        ' of the flat buffer. Press one of the walk buttons to see what a whole traversal touches.';
+    } else {
+      var gaps = [];
+      for (var g = 1; g < walkOffs.length; g++) gaps.push(walkOffs[g] - walkOffs[g - 1]);
+      var step = gaps.length ? gaps[0] : 0;
+      var packed = step === 1;
+      v.className = 'verdict-bar ' + (packed ? 'safe' : 'bad');
+      v.textContent = (packed ? '✔ Packed. ' : '⚠ Scattered. ') + 'This traversal visits offsets ' +
+        walkOffs.join(', ') + ' — a step of ' + step + ' element' + (step === 1 ? '' : 's') +
+        ' each time. ' + (packed
+          ? 'One contiguous run: the hardware can fetch it in a single burst.'
+          : 'Every step skips ' + (step - 1) + ' element' + (step - 1 === 1 ? '' : 's') +
+            ' the hardware will fetch anyway. Lesson 4 puts a number on that waste.');
+    }
+  }
+
+  $('l-walkrow').addEventListener('click', function () {
+    var L = layout(); walk = [];
+    for (var j = 0; j < L.C; j++) walk.push([hot.i, j]);
+    render();
+  });
+  $('l-walkcol').addEventListener('click', function () {
+    var L = layout(); walk = [];
+    for (var i = 0; i < L.R; i++) walk.push([i, hot.j]);
+    render();
+  });
+  $('l-clear').addEventListener('click', function () { walk = []; render(); });
+  ['l-rows', 'l-cols', 'l-view'].forEach(function (id) {
+    $(id).addEventListener('input', function () { walk = []; render(); });
+  });
+  render();
+})();
+</script>
+</body>
+</html>

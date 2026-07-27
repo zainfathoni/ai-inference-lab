@@ -31,8 +31,16 @@
 <ul>
   <li><a href="lessons/0000-what-inference-actually-is.html">Lesson 0 — What inference actually is</a> · the training-vs-inference split, for a fullstack dev.</li>
   <li><a href="lessons/0001-thread-block-grid-in-triton.html">Lesson 1 — Triton deletes a level</a> · how the CUDA thread→block→grid model re-draws itself in Triton.</li>
-  <li><a href="lessons/0002-inference-is-the-ongoing-half.html">Lesson 2 — Inference is the half you pay for forever</a> · prefill vs decode, the roofline, and why serving is a memory-bandwidth problem. Interactive.</li>
+  <li><a href="lessons/0002-inference-is-the-ongoing-half.html">Lesson 2 — Inference is the half you pay for forever</a> · prefill vs decode, the roofline, and why serving is a memory-bandwidth problem.</li>
+  <li><a href="lessons/0003-strides-and-layout.html">Lesson 3 — A tensor is a pointer plus arithmetic</a> · strides, views, and why transpose is free but not cheap.</li>
+  <li><a href="lessons/0004-memory-coalescing.html">Lesson 4 — The GPU fetches more than you asked for</a> · 32-byte sectors, and the 8× tax on a strided read.</li>
+  <li><a href="lessons/0005-quantization-and-nf4.html">Lesson 5 — Quantization: buying bandwidth with precision</a> · absmax, NF4, block size. This is Netra Task A.</li>
+  <li><a href="lessons/0006-matmul-and-tiling.html">Lesson 6 — Matmul earns its intensity by tiling</a> · why naive matmul runs at 0.3% of peak.</li>
+  <li><a href="lessons/0007-softmax-and-stability.html">Lesson 7 — Softmax, overflow, and the online trick</a> · the arithmetic behind FlashAttention.</li>
+  <li><a href="lessons/0008-attention-and-kv-cache.html">Lesson 8 — Attention and the KV cache</a> · the real ceiling on batch size.</li>
+  <li><a href="lessons/0009-benchmarking-honestly.html">Lesson 9 — Benchmarking a kernel honestly</a> · how a measurement becomes evidence.</li>
 </ul>
+<p style="font-size:.85rem"><a href="CURRICULUM/">See the full curriculum</a> — the arc, why the order, and what is deliberately not covered yet. <a class="raw-link" href="CURRICULUM.md">raw</a></p>
 
 <h2>Artifact types</h2>
 <ul>

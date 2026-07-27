@@ -40,6 +40,13 @@ URL path.
 | `lessons/0000-what-inference-actually-is.html` | `https://ai.zainf.dev/lessons/0000-what-inference-actually-is.html` |
 | `lessons/0001-thread-block-grid-in-triton.html` | `https://ai.zainf.dev/lessons/0001-thread-block-grid-in-triton.html` |
 | `lessons/0002-inference-is-the-ongoing-half.html` | `https://ai.zainf.dev/lessons/0002-inference-is-the-ongoing-half.html` |
+| `lessons/0003-strides-and-layout.html` | `https://ai.zainf.dev/lessons/0003-strides-and-layout.html` |
+| `lessons/0004-memory-coalescing.html` | `https://ai.zainf.dev/lessons/0004-memory-coalescing.html` |
+| `lessons/0005-quantization-and-nf4.html` | `https://ai.zainf.dev/lessons/0005-quantization-and-nf4.html` |
+| `lessons/0006-matmul-and-tiling.html` | `https://ai.zainf.dev/lessons/0006-matmul-and-tiling.html` |
+| `lessons/0007-softmax-and-stability.html` | `https://ai.zainf.dev/lessons/0007-softmax-and-stability.html` |
+| `lessons/0008-attention-and-kv-cache.html` | `https://ai.zainf.dev/lessons/0008-attention-and-kv-cache.html` |
+| `lessons/0009-benchmarking-honestly.html` | `https://ai.zainf.dev/lessons/0009-benchmarking-honestly.html` |
 | `reference/cuda-triton-glossary.html` | `https://ai.zainf.dev/reference/cuda-triton-glossary.html` |
 | `reference/inference-roofline.html` | `https://ai.zainf.dev/reference/inference-roofline.html` |
 | `assets/lesson.css` | `https://ai.zainf.dev/assets/lesson.css` |
@@ -57,6 +64,7 @@ extensionless directory URLs. The raw `.md` is also reachable.
 | `README.md` | `README/index.html` | `https://ai.zainf.dev/README/` |
 | `RESOURCES.md` | `RESOURCES/index.html` | `https://ai.zainf.dev/RESOURCES/` |
 | `NOTES.md` | `NOTES/index.html` | `https://ai.zainf.dev/NOTES/` |
+| `CURRICULUM.md` | `CURRICULUM/index.html` | `https://ai.zainf.dev/CURRICULUM/` |
 | `experiments/0001-vector-add-on-t4/README.md` | `experiments/0001-vector-add-on-t4/index.html` | `https://ai.zainf.dev/experiments/0001-vector-add-on-t4/` |
 | `records/0001-triton-program-instance.md` | `records/0001-triton-program-instance/index.html` | `https://ai.zainf.dev/records/0001-triton-program-instance/` |
 
@@ -102,7 +110,7 @@ Last verified live (all `HTTP/2 200`): homepage, Lesson 1, glossary,
 
 - **Generated files are build output.** Never hand-edit `MISSION/index.html`,
   `README/index.html`, `RESOURCES/index.html`, `NOTES/index.html`,
-  `experiments/0001-vector-add-on-t4/index.html`, or
+  `CURRICULUM/index.html`, `experiments/0001-vector-add-on-t4/index.html`, or
   `records/0001-triton-program-instance/index.html`. Edit the source `.md` and
   rebuild. Each generated file carries a "do not edit directly" comment.
 - **Lessons, reference docs, and the homepage are hand-authored HTML** — they do

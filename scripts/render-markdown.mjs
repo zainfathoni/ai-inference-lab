@@ -6,6 +6,7 @@ const pages = [
   { source: 'README.md', outDir: 'README', title: 'README' },
   { source: 'RESOURCES.md', outDir: 'RESOURCES', title: 'Resources' },
   { source: 'NOTES.md', outDir: 'NOTES', title: 'Notes' },
+  { source: 'CURRICULUM.md', outDir: 'CURRICULUM', title: 'Curriculum' },
   {
     source: 'experiments/0001-vector-add-on-t4/README.md',
     outDir: 'experiments/0001-vector-add-on-t4',

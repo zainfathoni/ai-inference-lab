@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 8 — Attention and the KV cache</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0008-attention-and-kv-cache.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>The answer to "why can't I just set batch = 154?"</h1>
+<p class="sub">Lesson 8 · the KV cache · the constraint Lesson 2 deliberately left out</p>
+
+<div class="ask">
+<a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a> ended with a promise: batching to ~154 makes
+FP16 decode compute-bound, and something stops you. This is that something. It also forces an honest
+correction to Lesson 2's model — at realistic context lengths, <b>the KV cache, not the weights, is most
+of your decode traffic</b>.
+</div>
+
+<h2>Why the cache exists at all</h2>
+
+<p>At decode time you generate one token. Attention for that token needs its query vector against the
+keys and values of <b>every previous token</b>. Those keys and values are a pure function of tokens you
+already processed — so recomputing them each step would make generation quadratic for no reason.</p>
+
+<p>So you keep them. That is the entire idea, and it is the same instinct you have about memoizing an
+expensive pure function. The cost is that the memoization table is enormous, lives in HBM, and grows with
+every token you emit.</p>
+
+<figure>
+  <figcaption>KV cache size: bytes held per token, per sequence.</figcaption>
+  <p class="listen"><b>Listen first:</b> bytes per token equals two — one for keys and one for values —
+  times the number of layers, times the number of key-value heads, times the head dimension, times bytes
+  per element. For Llama 2 7B in half precision that is two times thirty-two layers times thirty-two
+  key-value heads times a head dimension of one hundred twenty-eight times two bytes, which comes to five
+  hundred and twenty-four thousand two hundred eighty-eight bytes — five hundred and twelve kibibytes for
+  a single token of a single sequence. Multiply by a four-thousand-token context and one conversation is
+  holding over two gigabytes of cache.</p>
+  <pre aria-hidden="true"><code>kv_bytes_per_token = 2 · n_layers · n_kv_heads · head_dim · bytes_per_element
+                     ^ K and V
+
+Llama 2 7B, fp16:  2 · 32 · 32 · 128 · 2  =  524,288 B  =  512 KiB  per token
+                   × 4096 tokens of context  =  2.1 GB  for ONE sequence</code></pre>
+</figure>
+
+<h2>The number that ends the argument</h2>
+
+<p>An A100 has 80 GB. Llama 2 7B in fp16 takes 14 GB of it, and you need a few GB for activations and
+workspace. That leaves roughly 62 GB for cache. At 2.1 GB per sequence:</p>
+
+<blockquote><b>Maximum batch ≈ 28.</b> Lesson 2 said you needed 154 to stop wasting the GPU's math units.
+You are not short by a little — you are short by 5×, and no amount of scheduling cleverness changes it.
+<b>The KV cache is the binding constraint on serving throughput.</b></blockquote>
+
+<p>Now flip one knob. Drop the context from 4096 to 512 and the same card holds <b>230 sequences</b> —
+comfortably past 154. This is why serving systems care so much about context length, and why "supports
+128K context" and "serves cheaply" are in direct tension.</p>
+
+<h2>The correction to Lesson 2</h2>
+
+<p>Lesson 2's simulator counted only weight traffic, and said so. Here is what it was leaving out. Weights
+are read once per step and <b>shared by the whole batch</b>. The KV cache is read once per step
+<b>per sequence</b>. So as you batch up, KV traffic grows linearly while weight traffic stays flat:</p>
+
+<figure>
+  <figcaption>Decode traffic per step: weights are amortised across the batch, the cache is not.</figcaption>
+  <p class="listen"><b>Listen first:</b> per decode step the weight traffic is just the weight bytes,
+  paid once no matter how large the batch. The cache traffic is the per-token cache size times the context
+  length times the batch size — it scales with every sequence you add. Once you have filled the card, the
+  cache occupies essentially all the free memory, so cache traffic is roughly the whole of HBM and weight
+  traffic is a small fraction of it. For 7B at four thousand context that split is about eighty-one
+  percent cache to nineteen percent weights.</p>
+  <pre aria-hidden="true"><code>per decode step:
+    weight traffic = weight_bytes                     # ONCE, shared by the batch
+    cache traffic  = kv_per_token · context · batch   # PER SEQUENCE, grows with batch
+
+fill the card and the cache is ~all your free HBM, so it dominates:
+    7B fp16, ctx 4096, batch 28  →  14 GB weights  +  60 GB cache  =  81% cache</code></pre>
+</figure>
+
+<p>Which reorders your optimisation priorities. Quantizing weights from fp16 to INT4 was a 4× win in
+Lesson 2's model; at long context it saves 10.5 GB out of a 74 GB step — worth having, but the bigger
+lever has become <b>the cache itself</b>.</p>
+
+<h2>What the architects did about it: grouped-query attention</h2>
+
+<p>Llama 2 70B has 80 layers to 7B's 32 — but only <b>8 key-value heads</b> against 64 query heads. Its
+KV cache is <b>320 KiB per token, smaller than the 7B model's 512 KiB</b>, despite being ten times the
+model. That is grouped-query attention: many query heads share one KV head, and the cache shrinks by the
+sharing factor.</p>
+
+<p>It is worth sitting with that inversion. A 10× larger model with a <em>smaller</em> cache. The
+architecture was changed specifically to relieve the constraint this lesson is about.</p>
+
+<h2>Micro-world: find your real batch ceiling</h2>
+
+<div class="sim" id="ksim">
+  <h3>What fits on one A100 80GB</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">4 GB is reserved for activations and
+  workspace. Everything else is weights plus cache — and the cache is what runs out.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="k-model">Model</label>
+      <select id="k-model">
+        <option value="0" selected>Llama 2 7B — 32 KV heads</option>
+        <option value="1">Llama 2 13B — 40 KV heads</option>
+        <option value="2">Llama 2 70B — 8 KV heads (GQA)</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="k-ctx">Context length</label>
+      <select id="k-ctx">
+        <option value="512">512</option>
+        <option value="1024">1024</option>
+        <option value="2048">2048</option>
+        <option value="4096" selected>4096</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="k-wp">Weight precision</label>
+      <select id="k-wp">
+        <option value="2" selected>FP16 — 2 B/weight</option>
+        <option value="1">INT8 — 1 B/weight</option>
+        <option value="0.5">INT4 — 0.5 B/weight</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="k-kp">KV cache precision</label>
+      <select id="k-kp">
+        <option value="2" selected>FP16 — 2 B/element</option>
+        <option value="1">INT8 — 1 B/element</option>
+      </select>
+    </div>
+  </div>
+
+  <p class="axcap">80 GB of HBM, allocated</p>
+  <div id="k-hbm" style="display:flex;gap:2px;height:26px;margin:.4rem 0 .3rem"></div>
+  <p class="viz-legend">
+    <span><i style="background:#2a78d6"></i> weights</span>
+    <span><i style="background:#eb6834"></i> KV cache</span>
+    <span><i style="background:#e6e3dc"></i> reserved / unused</span>
+  </p>
+
+  <p class="axcap">Table view</p>
+  <table id="k-table" style="font-size:.78rem"></table>
+
+  <div class="readout" id="k-readout"></div>
+  <p class="verdict-bar" id="k-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Defaults: 7B, fp16, 4096 context.</b> Max batch 28 against a target of 154. There is the
+        answer to Lesson 2's cliffhanger, in one number.</li>
+    <li><b>Drop the context to 512.</b> Batch ceiling jumps past the target and decode finally becomes
+        compute-bound. Short conversations are cheap per token; long ones are not, and now you can say
+        exactly why.</li>
+    <li><b>Pick the 70B model with fp16 weights.</b> It does not fit at all — 140 GB of weights on an
+        80 GB card. Switch to INT4 and it fits with room for 30 sequences. For big models quantization is
+        not an optimisation, it is the price of admission.</li>
+    <li><b>Compare 13B and 70B KV-per-token.</b> The 70B model's cache is <em>smaller</em>, because of
+        8 KV heads instead of 40. That is GQA, and it is the single biggest architectural concession to
+        this constraint.</li>
+    <li><b>Quantize the KV cache to INT8 at 4096 context.</b> The batch ceiling doubles. Now compare that
+        to what quantizing the <em>weights</em> bought you at the same context — at long context the cache
+        is the bigger lever, which reverses Lesson 2's advice.</li>
+  </ul>
+</div>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on the constraint</h3>
+  <form>
+    <fieldset data-answer="b"
+      data-why="2 (K and V) × 32 layers × 32 KV heads × 128 head_dim × 2 bytes = 524,288 bytes = 512 KiB, for one token of one sequence. Multiply by context and by batch to get the real memory bill.">
+      <legend>1. Llama 2 7B in fp16: 32 layers, 32 KV heads, head_dim 128. KV bytes per token, per sequence?</legend>
+      <label><input type="radio" name="q1" value="a"> 128 KiB</label>
+      <label><input type="radio" name="q1" value="b"> 512 KiB</label>
+      <label><input type="radio" name="q1" value="c"> 2 MiB</label>
+      <label><input type="radio" name="q1" value="d"> 16 KiB</label>
+    </fieldset>
+
+    <fieldset data-answer="c"
+      data-why="80 layers but only 8 KV heads: 2×80×8×128×2 = 320 KiB per token, against 7B's 512 KiB. Grouped-query attention shrinks the cache by the query-to-KV sharing factor, and it more than cancels the extra depth.">
+      <legend>2. Llama 2 70B has 80 layers but only 8 KV heads. Its KV cache per token is…</legend>
+      <label><input type="radio" name="q2" value="a"> Far larger than the 7B model's.</label>
+      <label><input type="radio" name="q2" value="b"> Almost exactly the same as 7B's.</label>
+      <label><input type="radio" name="q2" value="c"> Smaller than the 7B model's.</label>
+      <label><input type="radio" name="q2" value="d"> Identical, since head_dim is unchanged.</label>
+    </fieldset>
+
+    <fieldset data-answer="a"
+      data-why="At 4096 context one sequence needs 2.1 GB of cache, and only ~62 GB is free after weights and workspace — about 28 sequences. The math units stay idle not because of the scheduler but because HBM ran out.">
+      <legend>3. Lesson 2 wanted batch ≈ 154. On one A100 with 7B at 4096 context, what stops you?</legend>
+      <label><input type="radio" name="q3" value="a"> The KV cache exhausts HBM around batch 28.</label>
+      <label><input type="radio" name="q3" value="b"> The scheduler cannot launch that many programs.</label>
+      <label><input type="radio" name="q3" value="c"> The weights themselves would no longer fit.</label>
+      <label><input type="radio" name="q3" value="d"> Attention turns compute-bound before decode does.</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+Decode attends over every previous token, so K and V are cached instead of recomputed:
+<code>2 · layers · kv_heads · head_dim · bytes</code> per token per sequence — <b>512 KiB/token for 7B
+fp16</b>, so 2.1 GB for one 4096-token sequence. On an 80 GB card that caps the batch near <b>28</b> when
+Lesson 2 wanted <b>154</b>: <b>the cache, not the scheduler, is the throughput ceiling.</b> Weights are
+read once per step and shared; the cache is read <em>per sequence</em>, so once the card is full the cache
+is ~80% of decode traffic. Levers: shorter context, <b>GQA</b> (70B's 8 KV heads make its cache
+<em>smaller</em> than 7B's), quantized KV, paged KV.
+</div>
+
+<h2>Where streaming softmax comes back</h2>
+<p><a href="0007-softmax-and-stability.html">Lesson 7</a>'s online softmax is what makes this survivable
+on the compute side. Attention scores are a <code>context × context</code> matrix during prefill — at
+4096 tokens that is 16M scores per head per layer, and materialising it in HBM would dwarf everything
+here. Because softmax can be computed with a running max and a rescaled running sum, FlashAttention
+processes the scores in tiles that stay in on-chip memory and never writes the matrix out at all. The
+numerical trick and the memory constraint are the same story told twice.</p>
+
+<h2>Primary source</h2>
+<p>Read <a href="https://arxiv.org/abs/2309.06180">Efficient Memory Management for Large Language Model
+Serving with PagedAttention</a> (the vLLM paper) §3 — the section measuring how much KV memory real
+serving systems waste to fragmentation and over-reservation (~15 min). It is the paper that turned this
+constraint into an operating-system problem. For grouped-query attention itself, the
+<a href="https://arxiv.org/abs/2307.09288">Llama 2 paper</a> §2.2 is the primary reference.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. The obvious sequel:
+<em>"how does paged attention actually reclaim that memory?"</em> — that is vLLM's whole contribution and
+would make a good next lesson.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="0009-benchmarking-honestly.html">Lesson 9 — Benchmarking a kernel honestly</a> — the last one, and the one that makes everything else count as evidence.</li>
+  <li><a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a> — reread the batch slider knowing what caps it.</li>
+</ul>
+
+<p class="foot">Lesson 8 · Zain's AI Inference Lab · sources: Llama 2 (arXiv:2307.09288), vLLM/PagedAttention (arXiv:2309.06180)</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: HBM budget -> batch ceiling, and the weights/cache traffic split. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var HBM = 80e9, RESERVE = 4e9, BW = 2039e9, PEAK = 312e12, BALANCE = PEAK / BW;
+
+  // layer/head counts are the published Llama 2 configs; N is the round parameter count
+  // used throughout this lab so the numbers line up with Lesson 2.
+  var MODELS = [
+    { label: 'Llama 2 7B',  N: 7e9,  L: 32, kv: 32, hd: 128 },
+    { label: 'Llama 2 13B', N: 13e9, L: 40, kv: 40, hd: 128 },
+    { label: 'Llama 2 70B', N: 70e9, L: 80, kv: 8,  hd: 128 }
+  ];
+
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+  function gb(b) { return (b / 1e9).toFixed(1) + ' GB'; }
+
+  function render() {
+    var m = MODELS[+$('k-model').value];
+    var ctx = +$('k-ctx').value;
+    var wbpp = +$('k-wp').value;
+    var kbpp = +$('k-kp').value;
+
+    var perTok = 2 * m.L * m.kv * m.hd * kbpp;
+    var perSeq = perTok * ctx;
+    var W = m.N * wbpp;
+    var free = HBM - RESERVE - W;
+    var maxB = free > 0 ? Math.floor(free / perSeq) : 0;
+    var need = Math.ceil(BALANCE * wbpp / 2);          // Lesson 2's compute-bound batch
+    var fits = free > 0;
+
+    // HBM allocation bar
+    var bar = $('k-hbm');
+    clear(bar);
+    function seg(bytes, colour, label) {
+      if (bytes <= 0) return;
+      var d = document.createElement('div');
+      d.style.cssText = 'flex:' + bytes + ' 0 0;background:' + colour +
+                        ';border-radius:3px;display:flex;align-items:center;justify-content:center;' +
+                        'font:600 10px system-ui;color:' + (colour === '#e6e3dc' ? '#52514e' : '#fff') +
+                        ';overflow:hidden;white-space:nowrap';
+      d.textContent = bytes / HBM > 0.13 ? label : '';
+      d.setAttribute('title', label);
+      bar.appendChild(d);
+    }
+    var kvUsed = fits ? Math.min(maxB * perSeq, free) : 0;
+    seg(Math.min(W, HBM), '#2a78d6', 'weights ' + gb(W));
+    seg(kvUsed, '#eb6834', 'KV ' + gb(kvUsed));
+    seg(Math.max(0, HBM - Math.min(W, HBM) - kvUsed), '#e6e3dc',
+        'reserved + slack ' + gb(Math.max(0, HBM - Math.min(W, HBM) - kvUsed)));
+
+    var stepBytes = W + kvUsed;
+    var stepT = stepBytes / BW;
+    var t = $('k-table');
+    clear(t);
+    var head = document.createElement('tr');
+    ['Quantity', 'Value'].forEach(function (h) {
+      var th = document.createElement('th'); th.textContent = h; head.appendChild(th);
+    });
+    t.appendChild(head);
+    [['KV cache per token, per sequence', (perTok / 1024).toFixed(0) + ' KiB   (2 · ' + m.L + ' · ' +
+        m.kv + ' · ' + m.hd + ' · ' + kbpp + ' B)'],
+     ['KV cache for one full sequence', gb(perSeq) + '   at ' + ctx + ' tokens'],
+     ['Weights', gb(W)],
+     ['Free for cache', fits ? gb(free) : 'none — the weights do not fit'],
+     ['Max batch that fits', fits ? String(maxB) : '0'],
+     ['Batch needed to be compute-bound', String(need) + '   (Lesson 2)'],
+     ['Decode traffic per step', fits ? gb(stepBytes) + '   → ' + (stepT * 1e3).toFixed(1) + ' ms' : '—'],
+     ['…of which is KV cache', fits && stepBytes > 0 ? (kvUsed / stepBytes * 100).toFixed(0) + '%' : '—'],
+     ['Throughput at that batch', fits ? (maxB / stepT).toFixed(0) + ' tokens/s' : '—']
+    ].forEach(function (r) {
+      var tr = document.createElement('tr');
+      var th = document.createElement('th'); th.setAttribute('scope', 'row'); th.textContent = r[0];
+      var td = document.createElement('td'); td.textContent = r[1];
+      tr.appendChild(th); tr.appendChild(td); t.appendChild(tr);
+    });
+
+    var ro = $('k-readout');
+    clear(ro);
+    [['kv_per_token = ', '2 · ' + m.L + ' layers · ' + m.kv + ' kv_heads · ' + m.hd + ' head_dim · ' +
+                          kbpp + ' B = ' + (perTok / 1024).toFixed(0) + ' KiB'],
+     ['max_batch    = ', '(80 − 4 − ' + (W / 1e9).toFixed(1) + ') GB / ' + (perSeq / 1e9).toFixed(2) +
+                          ' GB = ' + (fits ? maxB : 0)],
+     ['need (L2)    = ', 'ceil(153 · ' + wbpp + ' / 2) = ' + need],
+     ['verdict      = ', fits ? (maxB >= need ? 'reachable' : 'capped at ' +
+                          (maxB / need * 100).toFixed(0) + '% of what decode needs') : 'does not fit']
+    ].forEach(function (row) {
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = row[0];
+      ro.appendChild(k);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+
+    var v = $('k-verdict');
+    if (!fits) {
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ Does not fit. ' + gb(W) + ' of weights on an 80 GB card leaves nothing for ' +
+        'cache — before a single token is served. Quantize the weights, or use more than one GPU. ' +
+        'For models this size quantization is the price of admission, not an optimisation.';
+    } else if (maxB >= need) {
+      v.className = 'verdict-bar safe';
+      v.textContent = '✔ Reachable. ' + maxB + ' sequences fit and decode needs ' + need +
+        ' to become compute-bound, so here the cache is not your ceiling — you can actually use the ' +
+        'math units you paid for. Note what it cost: a context of only ' + ctx + ' tokens.';
+    } else {
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ Capped at ' + maxB + ' sequences, against the ' + need +
+        ' decode needs to stop wasting math units. Off by ' + (need / Math.max(maxB, 1)).toFixed(1) +
+        '×, and no scheduling trick closes it — you are out of HBM, not out of parallelism. ' +
+        'KV cache is ' + (kvUsed / stepBytes * 100).toFixed(0) + '% of the traffic per step.';
+    }
+  }
+
+  ['k-model', 'k-ctx', 'k-wp', 'k-kp'].forEach(function (id) {
+    $(id).addEventListener('input', render);
+  });
+  render();
+})();
+</script>
+</body>
+</html>

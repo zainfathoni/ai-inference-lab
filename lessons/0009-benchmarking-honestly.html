@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 9 — Benchmarking a kernel honestly</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0009-benchmarking-honestly.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>Most kernel speedups are measurement bugs</h1>
+<p class="sub">Lesson 9 · warmup, synchronization, L2, and quantiles · how a benchmark becomes evidence</p>
+
+<div class="ask">
+This is the lesson that makes the other eight count. Your <a href="../MISSION.md">mission</a> says
+lessons teach but <b>proof comes from measurement</b> — and a measurement you cannot defend is not proof,
+it is a story. Every trap below has produced a confident, wrong, publicly-posted speedup number.
+</div>
+
+<h2>Trap 1: the GPU has not finished</h2>
+
+<p>CUDA launches are <b>asynchronous</b>. Your Python call queues the kernel and returns immediately. If
+you wrap it in <code>time.time()</code> you are timing the <em>launch</em>, not the work.</p>
+
+<figure>
+  <figcaption>The wrong way and the right way to put a clock around a GPU kernel.</figcaption>
+  <p class="listen"><b>Listen first:</b> the broken version records a start time, calls the kernel, and
+  records an end time. Because the launch returns before the GPU has done anything, the elapsed time is
+  microseconds of queueing, and you conclude your kernel is a hundred times faster than it is. The correct
+  version calls <code>torch.cuda.synchronize</code> before the first timestamp — to drain anything already
+  queued — and again before the second, which blocks until the GPU has actually finished. Only then does
+  the elapsed time describe the kernel.</p>
+  <pre aria-hidden="true"><code># WRONG — measures the launch, not the work
+t0 = time.time();  my_kernel[grid](x, y, out);  t1 = time.time()
+print(t1 - t0)                          # ~8 microseconds. It is not 8 microseconds.
+
+# RIGHT
+torch.cuda.synchronize();  t0 = time.time()
+my_kernel[grid](x, y, out)
+torch.cuda.synchronize();  t1 = time.time()</code></pre>
+</figure>
+
+<h2>Trap 2: the first call is not the kernel</h2>
+
+<p>Triton is a JIT. The first invocation of a <code>@triton.jit</code> function <b>compiles</b> it, and
+if you used <code>@triton.autotune</code> it also benchmarks every config in your search space. That
+first call can be hundreds of milliseconds against a kernel that runs in one. Discard it — and discard a
+few more, because the caching allocator, clocks and cuDNN heuristics all settle over the first several
+calls.</p>
+
+<h2>Trap 3: you are measuring the L2 cache</h2>
+
+<p>This is the subtle one, and it is the one that inflates <em>bandwidth</em> claims specifically. Run the
+same kernel on the same buffers in a tight loop and after the first iteration the input is already sitting
+in L2 — 40 MB of it on an A100. Your kernel is now reading from cache at several times HBM bandwidth, and
+you report a number the memory system cannot actually sustain.</p>
+
+<p>This matters enormously for everything in this lab, because per
+<a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a> your kernels are memory-bound — so a
+benchmark that accidentally removes the memory bottleneck is measuring nothing you care about.
+<code>triton.testing.do_bench</code> writes over a cache-sized buffer between repetitions for exactly
+this reason.</p>
+
+<h2>Trap 4: the mean of a skewed distribution</h2>
+
+<p>GPU timings are noisy and <b>right-skewed</b> — an OS hiccup or a clock dip adds time, nothing ever
+subtracts it. One 3 ms outlier in a hundred 1 ms runs drags the mean but not the median. Report the
+<b>median with quantiles</b>, which is what <code>do_bench</code>'s <code>quantiles</code> argument gives
+you. <em>Minimum</em> is not the answer either: it is the best case you ever saw under ideal cache and
+clock conditions, and production never runs there.</p>
+
+<h2>The tool that does all four for you</h2>
+
+<figure>
+  <figcaption>The standard harness, with the four traps handled.</figcaption>
+  <p class="listen"><b>Listen first:</b> <code>triton.testing.do_bench</code> takes a zero-argument
+  callable. Warmup and rep are durations in milliseconds — it estimates how many iterations fit in each
+  window rather than making you pick a count. Passing a list of quantiles returns the median and the
+  bounds you asked for instead of a single number. It synchronises, discards the warmup window, and
+  clears the L2 cache between repetitions by default. The line above it is the one people skip: assert
+  that your kernel agrees with the reference before you time it, because a wrong kernel can be
+  arbitrarily fast.</p>
+  <pre aria-hidden="true"><code>import triton, torch
+
+torch.testing.assert_close(mine(x), reference(x), atol=1e-2, rtol=0)   # CORRECTNESS FIRST
+
+ms, lo, hi = triton.testing.do_bench(
+    lambda: mine(x),
+    warmup=25, rep=100,              # DURATIONS in ms, not iteration counts
+    quantiles=[0.5, 0.2, 0.8],       # median, and the spread around it
+)
+gbps = total_bytes_moved / (ms * 1e-3) / 1e9     # memory-bound kernel → report GB/s</code></pre>
+</figure>
+
+<blockquote>And always against a <b>real baseline</b>. "2.1× faster than PyTorch eager on an A100 at this
+shape, median of 100 reps" is evidence. "Very fast" is not, and neither is a speedup over a naive
+implementation you wrote yourself to lose.</blockquote>
+
+<h2>Micro-world: measure a kernel wrong, then right</h2>
+
+<div class="sim" id="bsim">
+  <h3>A kernel whose true runtime is exactly 1.000 ms</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">You know the truth here — that is the point.
+  Turn the safeguards off one at a time and watch what you would have reported. The PyTorch baseline for
+  this shape is 2.000 ms, so the honest speedup is 2.0×.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label class="toggle" for="b-sync"><input type="checkbox" id="b-sync" checked>
+        <code>cuda.synchronize()</code></label>
+    </div>
+    <div class="ctl">
+      <label class="toggle" for="b-l2"><input type="checkbox" id="b-l2" checked>
+        Flush L2 between reps</label>
+    </div>
+    <div class="ctl">
+      <label for="b-warm">Warmup calls discarded: <output id="b-warm-v">25</output></label>
+      <input type="range" id="b-warm" min="0" max="25" step="1" value="25">
+    </div>
+    <div class="ctl">
+      <label for="b-reps">Repetitions: <output id="b-reps-v">30</output></label>
+      <input type="range" id="b-reps" min="1" max="30" step="1" value="30">
+    </div>
+    <div class="ctl">
+      <label for="b-stat">Statistic reported</label>
+      <select id="b-stat">
+        <option value="median" selected>median</option>
+        <option value="mean">mean</option>
+        <option value="min">minimum</option>
+      </select>
+    </div>
+  </div>
+
+  <p class="axcap">Per-repetition timings (after warmup)</p>
+  <div id="b-bars" style="display:flex;align-items:flex-end;gap:2px;height:88px;margin:.4rem 0 0"></div>
+  <p id="b-barlab" style="font-family:system-ui,-apple-system,sans-serif;font-size:.72rem;color:#898781;margin:.3rem 0 0"></p>
+
+  <p class="axcap">Table view</p>
+  <table id="b-table" style="font-size:.78rem"></table>
+
+  <div class="readout" id="b-readout"></div>
+  <p class="verdict-bar" id="b-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Everything on: 25 warmup, 30 reps, L2 flushed, median.</b> Reported ≈ 1.00 ms against a truth
+        of 1.00 ms, and an honest 2.0× over the baseline. This is the only configuration you may publish.</li>
+    <li><b>Untick synchronize.</b> You now report microseconds and a speedup in the hundreds. This is the
+        single most common way a GPU benchmark lies, and it lies <em>in your favour</em>, which is why it
+        survives review.</li>
+    <li><b>Sync back on; set warmup to 0 <em>and</em> reps to 1.</b> Your single measurement is the JIT
+        compile: 250× too slow. Measurement error is not always flattering.</li>
+    <li><b>Now raise reps back to 30, warmup still 0.</b> The reported number returns to ~1 ms — the
+        median quietly absorbed the 250 ms first call. Then switch to <b>mean</b> and watch it explode.
+        Two safeguards covering for each other, which is exactly why you want both rather than either.</li>
+    <li><b>Untick "flush L2".</b> A quiet ~2.4× overstatement: the input never leaves cache, so you are
+        benchmarking L2 rather than HBM. On a memory-bound kernel that invalidates the entire result.</li>
+    <li><b>Switch median → mean with 30 reps.</b> One outlier rep drags the mean noticeably while the
+        median ignores it. Then try minimum, and notice it reports a time the kernel only achieves on its
+        luckiest run.</li>
+  </ul>
+</div>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on measurement</h3>
+  <form>
+    <fieldset data-answer="c"
+      data-why="CUDA launches are asynchronous: the call returns as soon as the work is queued. Without a synchronize before the second timestamp you are timing the queueing, which is microseconds regardless of how long the kernel really takes.">
+      <legend>1. You wrap a Triton call in <code>time.time()</code> with no <code>synchronize()</code>. What did you measure?</legend>
+      <label><input type="radio" name="q1" value="a"> The kernel's actual execution time.</label>
+      <label><input type="radio" name="q1" value="b"> The kernel's JIT compilation time.</label>
+      <label><input type="radio" name="q1" value="c"> The launch overhead — the GPU is still working.</label>
+      <label><input type="radio" name="q1" value="d"> The time to copy the results back to host.</label>
+    </fieldset>
+
+    <fieldset data-answer="a"
+      data-why="Triton compiles on first invocation, and @triton.autotune benchmarks every config in the search space on top of that. Hundreds of milliseconds attributed to a one-millisecond kernel, unless you throw the early calls away.">
+      <legend>2. Why must you discard the first several calls?</legend>
+      <label><input type="radio" name="q2" value="a"> They include JIT compilation and autotuning.</label>
+      <label><input type="radio" name="q2" value="b"> The first call returns incorrect results.</label>
+      <label><input type="radio" name="q2" value="c"> The allocator has not yet seen the inputs.</label>
+      <label><input type="radio" name="q2" value="d"> CUDA reserves the first launch for profiling.</label>
+    </fieldset>
+
+    <fieldset data-answer="d"
+      data-why="After the first iteration the inputs are resident in the 40 MB L2, so the kernel reads at cache speed rather than HBM speed. For a memory-bound kernel that removes the very bottleneck you were trying to measure, and inflates any GB/s figure you quote.">
+      <legend>3. Why does <code>do_bench</code> clear the L2 cache between repetitions?</legend>
+      <label><input type="radio" name="q3" value="a"> To stop the kernel reading stale data.</label>
+      <label><input type="radio" name="q3" value="b"> To make results comparable across machines.</label>
+      <label><input type="radio" name="q3" value="c"> To stop the GPU clocks from boosting.</label>
+      <label><input type="radio" name="q3" value="d"> Otherwise you measure cache, not HBM.</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+Four traps. <b>Async</b> — CUDA launches return immediately, so <code>synchronize()</code> on both sides
+or you time the queue. <b>Warmup</b> — Triton JIT-compiles and autotunes on the first call; discard the
+early ones. <b>L2</b> — repeat the same buffers and you benchmark a 40 MB cache instead of HBM, which
+destroys any memory-bound result. <b>Statistics</b> — timings are right-skewed, so report the
+<b>median with quantiles</b>, never the mean and never the min. <code>triton.testing.do_bench</code> does
+all four (<code>warmup</code>/<code>rep</code> are durations in ms). And <b>check correctness before you
+time anything</b>, against a real baseline — a wrong kernel is arbitrarily fast.
+</div>
+
+<h2>The reporting checklist</h2>
+<p>A benchmark in this lab is only evidence if it states all of these. Copy this into every experiment
+README:</p>
+<table>
+<tr><th>Field</th><th>Why it is required</th></tr>
+<tr><td>GPU model and clocks</td><td>A T4 result does not transfer to an A100. Boost vs sustained clocks differ.</td></tr>
+<tr><td>Exact shapes and dtypes</td><td>Kernel performance is shape-dependent; one shape is an anecdote.</td></tr>
+<tr><td>Baseline, named and versioned</td><td>"Faster than PyTorch 2.x eager" — not faster than nothing.</td></tr>
+<tr><td>Correctness check with tolerances</td><td>Stated <code>atol</code>/<code>rtol</code>, run before timing.</td></tr>
+<tr><td>Warmup and rep settings</td><td>So the reader knows the traps above were handled.</td></tr>
+<tr><td>Median + spread, not a single number</td><td>A point estimate hides the distribution.</td></tr>
+<tr><td>GB/s for memory-bound, TFLOP/s for compute-bound</td><td>Per Lesson 2 — quoting the wrong one hides the real limit.</td></tr>
+<tr><td>What you did <em>not</em> test</td><td>Honesty about scope is what makes the rest believable.</td></tr>
+</table>
+
+<h2>Primary source</h2>
+<p>Read the source of <a href="https://github.com/triton-lang/triton/blob/main/python/triton/testing.py"><code>triton.testing.do_bench</code></a>
+(~50 lines, 10 min). It is short, and reading it is worth more than any blog post: you can see the cache
+flush, the synchronize calls, the warmup estimation and the quantile handling in code. Every one of this
+lesson's four traps is a line in that file.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. When
+<a href="../experiments/0001-vector-add-on-t4/">Experiment 0001</a> produces numbers, bring them here and
+we will audit them against the checklist together — that is the highest-value thing this lesson can do
+for you.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="../CURRICULUM/">The curriculum</a> — the whole arc, and what is deliberately not covered yet.</li>
+  <li><a href="../reference/inference-roofline.html">Reference: the inference cost model</a> — the formulas your benchmark should be compared against.</li>
+  <li><a href="0005-quantization-and-nf4.html">Lesson 5 — Quantization</a> — the kernel to actually go and benchmark.</li>
+</ul>
+
+<p class="foot">Lesson 9 · Zain's AI Inference Lab · source: triton.testing.do_bench</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: a measurement pipeline over a kernel whose true time is known to be 1.000 ms. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var TRUTH = 1.000, BASELINE = 2.000, LAUNCH = 0.008;
+
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+
+  // Deterministic model of what call number `i` would measure.
+  function callTime(i, l2) {
+    var t;
+    if (i === 0) t = 250;                 // Triton JIT compile + autotune
+    else if (i === 1) t = 1.40;           // allocator / clocks still settling
+    else if (i === 2) t = 1.15;
+    else if (i === 3) t = 1.05;
+    else t = TRUTH;
+    if (!l2 && i > 0) t *= 0.42;          // inputs still resident in L2 — cache, not HBM
+    return t;
+  }
+
+  function render() {
+    var sync = $('b-sync').checked, l2 = $('b-l2').checked;
+    var W = +$('b-warm').value, R = +$('b-reps').value, stat = $('b-stat').value;
+    $('b-warm-v').textContent = W;
+    $('b-reps-v').textContent = R;
+
+    var samples = [];
+    for (var r = 0; r < R; r++) {
+      if (!sync) { samples.push(LAUNCH); continue; }   // timing the queue, not the work
+      var t = callTime(W + r, l2);
+      t *= 1 + 0.02 * Math.sin(r * 2.399);             // deterministic jitter
+      if (r === 7 && R > 7) t *= 3.2;                  // one right-skewed outlier
+      samples.push(t);
+    }
+
+    var sorted = samples.slice().sort(function (a, b) { return a - b; });
+    var reported =
+      stat === 'mean' ? samples.reduce(function (a, b) { return a + b; }, 0) / samples.length :
+      stat === 'min'  ? sorted[0] :
+                        sorted[Math.floor(sorted.length / 2)];
+    var factor = reported / TRUTH;
+    var claimed = BASELINE / reported;
+
+    var bars = $('b-bars');
+    clear(bars);
+    var mx = Math.max.apply(null, samples);
+    for (var i = 0; i < samples.length; i++) {
+      var d = document.createElement('div');
+      var h = Math.max(2, (samples[i] / mx) * 84);
+      var near = Math.abs(samples[i] - reported) / Math.max(reported, 1e-9) < 0.03;
+      d.style.cssText = 'flex:1 1 0;height:' + h.toFixed(1) + 'px;background:' +
+                        (near ? '#eb6834' : '#2a78d6') + ';border-radius:2px 2px 0 0';
+      d.setAttribute('title', 'rep ' + i + ': ' + samples[i].toFixed(3) + ' ms');
+      bars.appendChild(d);
+    }
+    $('b-barlab').textContent = 'rep 0 … rep ' + (R - 1) + '   ·   tallest = ' + mx.toFixed(3) +
+      ' ms   ·   orange bars are at the reported ' + stat;
+
+    var t2 = $('b-table');
+    clear(t2);
+    var head = document.createElement('tr');
+    ['Quantity', 'Value'].forEach(function (h2) {
+      var th = document.createElement('th'); th.textContent = h2; head.appendChild(th);
+    });
+    t2.appendChild(head);
+    [['True kernel time', TRUTH.toFixed(3) + ' ms'],
+     ['What you would report', reported < 0.01 ? (reported * 1000).toFixed(1) + ' µs'
+                                               : reported.toFixed(3) + ' ms'],
+     ['Error factor', Math.abs(factor - 1) < 0.05 ? 'within 5% of the truth'
+                      : factor < 1 ? (1 / factor).toFixed(1) + '× too fast'
+                                   : factor.toFixed(1) + '× too slow'],
+     ['Claimed speedup vs 2.000 ms baseline', claimed.toFixed(1) + '×'],
+     ['Honest speedup', '2.0×']
+    ].forEach(function (r2) {
+      var tr = document.createElement('tr');
+      var th2 = document.createElement('th'); th2.setAttribute('scope', 'row'); th2.textContent = r2[0];
+      var td = document.createElement('td'); td.textContent = r2[1];
+      tr.appendChild(th2); tr.appendChild(td); t2.appendChild(tr);
+    });
+
+    var ro = $('b-readout');
+    clear(ro);
+    [['synchronize   = ', sync ? 'on' : 'OFF  → you are timing the launch queue'],
+     ['L2 flush      = ', l2 ? 'on' : 'OFF  → inputs stay resident; you are timing cache'],
+     ['warmup        = ', W + ' calls discarded' + (W === 0 ? '  → rep 0 carries the JIT compile' : '')],
+     ['statistic     = ', stat + ' of ' + R + ' reps']
+    ].forEach(function (row) {
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = row[0];
+      ro.appendChild(k);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+
+    var v = $('b-verdict');
+    var problems = [];
+    if (!sync) problems.push('no synchronize');
+    if (!l2) problems.push('L2 not flushed');
+    if (W < 4) problems.push('insufficient warmup');
+    if (stat !== 'median') problems.push('reporting the ' + stat);
+
+    if (!problems.length && Math.abs(factor - 1) < 0.05) {
+      v.className = 'verdict-bar safe';
+      v.textContent = '✔ Publishable. ' + reported.toFixed(3) + ' ms against a true ' +
+        TRUTH.toFixed(3) + ' ms, and a defensible 2.0× over the baseline. Every trap handled, and the ' +
+        'outlier rep is visible in the bars but not in the number.';
+    } else if (Math.abs(factor - 1) < 0.05) {
+      // The number survived, but only because another safeguard covered for the missing one.
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ Right answer, wrong method — ' + problems.join(', ') +
+        '. The reported ' + reported.toFixed(3) + ' ms happens to be close to the true ' +
+        TRUTH.toFixed(3) + ' ms because another safeguard absorbed it (the median is ignoring a bad ' +
+        'call the mean would not). A result that is correct by luck is not defensible; drop the reps ' +
+        'or switch to the mean and watch it fall over.';
+    } else {
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ Not evidence — ' + problems.join(', ') + '. You would report ' +
+        (reported < 0.01 ? (reported * 1000).toFixed(1) + ' µs' : reported.toFixed(3) + ' ms') +
+        ' for a 1.000 ms kernel and claim ' + claimed.toFixed(1) + '× when the truth is 2.0×.';
+    }
+  }
+
+  ['b-sync', 'b-l2', 'b-warm', 'b-reps', 'b-stat'].forEach(function (id) {
+    $(id).addEventListener('input', render);
+  });
+  render();
+})();
+</script>
+</body>
+</html>

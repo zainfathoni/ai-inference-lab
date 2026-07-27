@@ -162,6 +162,23 @@ figcaption { font-size:.8rem; color:var(--muted); font-style:italic; margin-top:
 .tstate { font-family:system-ui,-apple-system,sans-serif; font-size:.7rem; margin:.25rem 0 0;
           text-align:center; color:#52514e; }
 .tstate.bad { color:#a82f2f; font-weight:600; }
+/* Logical grid: a shape-eye view that sits above the linear memory strip. */
+.lgrid { display:inline-grid; gap:2px; margin:.5rem 0 0; }
+.lgrid button { all:unset; cursor:pointer; width:34px; height:26px; border-radius:3px;
+                background:#cde2fb; font-family:"SF Mono",Menlo,monospace; font-size:.66rem;
+                color:#184f95; display:flex; align-items:center; justify-content:center; }
+.lgrid button:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.lgrid button.hot { background:#2a78d6; color:#fff; font-weight:700; }
+.lgrid button.touched { background:#86b6ef; }
+.mem { display:flex; flex-wrap:wrap; gap:2px; margin:.4rem 0 0; }
+.mem .m { width:34px; height:26px; border-radius:3px; background:#f0efec;
+          font-family:"SF Mono",Menlo,monospace; font-size:.62rem; color:#898781;
+          display:flex; align-items:center; justify-content:center; }
+.mem .m.hot { background:#eb6834; color:#fff; font-weight:700; }
+.mem .m.touched { background:#f8c4ad; color:#7a3410; }
+.axcap { font-family:system-ui,-apple-system,sans-serif; font-size:.72rem; color:#52514e;
+         margin:.9rem 0 0; font-weight:600; }
+.sim .btnrow { display:flex; gap:.5rem; flex-wrap:wrap; margin:.8rem 0 0; }
 .readout { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:.76rem; background:#f4f6f8;
            border-left:3px solid var(--accent); padding:.7rem .9rem; margin:1rem 0 0;
            overflow-x:auto; }

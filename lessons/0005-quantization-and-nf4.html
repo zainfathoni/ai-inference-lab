@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 5 — Quantization: buying bandwidth with precision</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0005-quantization-and-nf4.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>Quantization is a bandwidth trick that happens to save memory</h1>
+<p class="sub">Lesson 5 · absmax, INT4 and NF4 · this is Netra Task A</p>
+
+<div class="ask">
+This is the lesson your short-term goal actually needs. Netra Task A is NF4 dequantization, and
+<a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a> already told you why anyone bothers:
+decode time is <code>weight_bytes ÷ bandwidth</code>. Quarter the bytes, quarter the time. Everything
+below is about what that costs you in accuracy — and where the cost is hiding.
+</div>
+
+<h2>Get the motivation the right way round</h2>
+
+<p>Most explanations lead with "quantization lets you fit a big model on a small card." True, and second
+in importance. The first-order effect is the one from Lesson 2:</p>
+
+<blockquote>Decode re-reads <b>every weight, for every token</b>. It is memory-bound. So the bytes per
+weight <em>is</em> the latency. FP16 → INT4 is not a 4× memory saving that happens to be fast; it is a
+<b>4× speedup</b> that happens to save memory.</blockquote>
+
+<p>That reframing tells you where to look for wins and, just as usefully, where not to: quantizing
+weights barely helps <b>prefill</b>, which is compute-bound. Same lesson, same simulator, already proven.</p>
+
+<h2>Absmax quantization, in four lines</h2>
+
+<figure>
+  <figcaption>Symmetric absmax quantization and its inverse, for a block of weights.</figcaption>
+  <p class="listen"><b>Listen first:</b> four steps. One, take a block of weights and find the largest
+  absolute value in it — the absmax. Two, divide that by the largest integer code you can store, giving a
+  scale; for signed four-bit that largest code is seven. Three, quantize by dividing each weight by the
+  scale and rounding to the nearest integer. Four, dequantize by multiplying the integer back by the
+  scale. The stored artefact is the small integers plus one scale per block. Notice that the scale is
+  shared: one weight sets it for everybody.</p>
+  <pre aria-hidden="true"><code>absmax = max(|w|) over the block          # ONE value shared by the whole block
+scale  = absmax / 7                       # 7 = largest code in signed 4-bit
+q      = round(w / scale)                 # store this  (4 bits each)
+w'     = q * scale                        # dequantize: this is what the kernel rebuilds</code></pre>
+</figure>
+
+<p>Read line 1 again, because it is the whole game. <b>One weight sets the step size for the entire
+block.</b> If a block contains a single huge outlier, the scale inflates and every other weight in that
+block is rounded with a coarser ruler. Outliers do not damage themselves — <em>they damage their
+neighbours</em>.</p>
+
+<h2>What NF4 changes</h2>
+
+<p>INT4-absmax spaces its 15 codes <b>uniformly</b> between −absmax and +absmax. But neural network
+weights are not uniform — they are roughly <b>normally distributed</b>, clustered near zero. Uniform
+levels spend most of their resolution on tail values that barely occur.</p>
+
+<p>NF4 keeps 4 bits but moves the 16 levels to the <b>quantiles of a standard normal</b>, so each level
+carries roughly equal probability mass. Dense near zero, sparse in the tails — matching where the weights
+actually are.</p>
+
+<figure>
+  <figcaption>The 16 NF4 levels, normalized to [-1, 1], as used by bitsandbytes.</figcaption>
+  <p class="listen"><b>Listen first:</b> sixteen fixed levels running from minus one to plus one, with an
+  exact zero in the middle. The spacing is the point: between zero and roughly zero-point-one-six there
+  are two levels, while the entire stretch from zero-point-seven-two to one contains only one. Resolution
+  is concentrated where normally-distributed weights actually live. These numbers are a fixed lookup
+  table, not something computed per model — which is exactly why dequantizing NF4 is a table lookup and a
+  multiply, and why it makes a good kernel exercise.</p>
+  <pre aria-hidden="true"><code>NF4 = [-1.0,      -0.6961928, -0.5250731, -0.3949175,
+       -0.2844414, -0.1847734, -0.0910500,  0.0,
+        0.0795803,  0.1609302,  0.2461123,  0.3379152,
+        0.4407098,  0.5626170,  0.7229568,  1.0]
+
+dequantize:  w' = NF4[code] * absmax_of_block     # lookup + multiply</code></pre>
+</figure>
+
+<p>The honest scorecard, measured on the 64 normally-distributed weights in the micro-world below:</p>
+
+<table>
+<tr><th>Format, block 64</th><th>RMS error</th><th>Worst-case error</th><th>Bits/weight</th></tr>
+<tr><td>INT8 absmax</td><td>0.0062</td><td>0.0103</td><td>8.25</td></tr>
+<tr><td>INT4 absmax</td><td>0.1026</td><td><b>0.1849</b></td><td>4.25</td></tr>
+<tr><td>NF4</td><td><b>0.0815</b></td><td>0.2324</td><td>4.25</td></tr>
+</table>
+
+<p>NF4 wins on <b>average</b> error — about 1.26× better RMS at identical bits — and <em>loses</em> on
+worst case. That is not a flaw, it is the trade it was designed to make: its levels are sparse in the
+tails, so the rare large weight is reconstructed less precisely, in exchange for better accuracy on the
+many small ones. Anyone who tells you NF4 is strictly better is skipping the second column.</p>
+
+<h2>Where the 0.25 bits come from</h2>
+
+<p>You store 4 bits per weight <em>plus</em> one fp16 scale per block. At block size 64 that is
+<code>4 + 16/64 = 4.25</code> bits per weight. Shrink the block to 16 and error drops — but the overhead
+triples to <code>4 + 16/16 = 5.0</code> bits. That tension is the dial this lesson is really about.
+(QLoRA's "double quantization" then quantizes the scales themselves, clawing 4.25 back to about 4.127.)</p>
+
+<h2>Micro-world: quantize a real block and watch it break</h2>
+
+<div class="sim" id="qsim">
+  <h3>64 weights, one scale per block</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">The weights are a fixed pseudo-random normal
+  sample — identical on every load, so you can compare runs honestly. Bars show absolute reconstruction
+  error per weight.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="q-fmt">Format</label>
+      <select id="q-fmt">
+        <option value="int8">INT8 absmax — 8 bits</option>
+        <option value="int4">INT4 absmax — 4 bits, uniform levels</option>
+        <option value="nf4" selected>NF4 — 4 bits, normal quantiles</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="q-block">Block size</label>
+      <select id="q-block">
+        <option value="64" selected>64 (bitsandbytes default)</option>
+        <option value="32">32</option>
+        <option value="16">16</option>
+        <option value="8">8</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="q-dist">Weight distribution</label>
+      <select id="q-dist">
+        <option value="normal" selected>normal — the usual case</option>
+        <option value="outlier">normal + one big outlier</option>
+      </select>
+    </div>
+  </div>
+
+  <p class="axcap">Absolute reconstruction error, per weight (all 64, in order)</p>
+  <div id="q-bars" style="display:flex;align-items:flex-end;gap:1px;height:80px;margin:.4rem 0 0"></div>
+  <p id="q-barlab" style="font-family:system-ui,-apple-system,sans-serif;font-size:.72rem;color:#898781;margin:.3rem 0 0"></p>
+
+  <p class="axcap">Inside block 0 — the first eight weights</p>
+  <table id="q-table" style="font-size:.76rem"></table>
+
+  <div class="readout" id="q-readout"></div>
+  <p class="verdict-bar" id="q-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Compare INT4 and NF4 at block 64, normal weights.</b> Same 4.25 bits/weight. NF4's RMS is lower
+        — but check the worst-case row and watch it go the other way. Both facts are real.</li>
+    <li><b>Switch the distribution to "one big outlier" and keep block 64.</b> One weight changes, and the
+        error bars go up <em>across the whole block</em>. Nothing else about the data moved. This is the
+        misconception this simulator exists to break: quantization error is not a property of a weight, it
+        is a property of the company it keeps.</li>
+    <li><b>Now shrink the block to 16, outlier still on.</b> The damage collapses to the one block that
+        actually contains the outlier — the other three are untouched. That is why block size exists.</li>
+    <li><b>Watch the bits/weight line as you shrink the block.</b> 4.25 → 4.5 → 5.0 → 6.0. You are buying
+        accuracy with bandwidth, which is the exact currency Lesson 2 said you were short of.</li>
+    <li><b>Set INT8 at block 8</b> and read the decode-speedup line. You have spent 10 bits/weight to get
+        excellent accuracy and thrown away most of the speedup. Every quantization decision is this
+        trade.</li>
+  </ul>
+</div>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on the trade you just made</h3>
+  <form>
+    <fieldset data-answer="b"
+      data-why="4 bits per weight plus one fp16 scale shared by 64 weights: 4 + 16/64 = 4.25. Halving the block size doubles the scale overhead, which is why block size is a bandwidth decision and not just an accuracy one.">
+      <legend>1. NF4 with one fp16 scale per 64-weight block. What is the true bits-per-weight?</legend>
+      <label><input type="radio" name="q1" value="a"> 4.0</label>
+      <label><input type="radio" name="q1" value="b"> 4.25</label>
+      <label><input type="radio" name="q1" value="c"> 4.5</label>
+      <label><input type="radio" name="q1" value="d"> 5.0</label>
+    </fieldset>
+
+    <fieldset data-answer="c"
+      data-why="The block shares one absmax, so the outlier inflates the scale and coarsens the step size for all 63 neighbours. Their error roughly triples in the simulator, and none of their own values changed.">
+      <legend>2. One weight in a block is far larger than the rest. What happens to the other 63?</legend>
+      <label><input type="radio" name="q2" value="a"> Nothing — each weight is scaled on its own.</label>
+      <label><input type="radio" name="q2" value="b"> They are clipped to the block's maximum value.</label>
+      <label><input type="radio" name="q2" value="c"> They lose precision, since absmax sets the step.</label>
+      <label><input type="radio" name="q2" value="d"> They are moved into a separate overflow block.</label>
+    </fieldset>
+
+    <fieldset data-answer="a"
+      data-why="Same 4 bits, better placement. Weights are roughly normal, so levels at normal quantiles put resolution where the values actually are. The price is coarser reconstruction out in the tails.">
+      <legend>3. Why does NF4 beat INT4-absmax on average error at identical bit width?</legend>
+      <label><input type="radio" name="q3" value="a"> Its 16 levels sit at normal-distribution quantiles.</label>
+      <label><input type="radio" name="q3" value="b"> It quietly uses more bits per weight than INT4.</label>
+      <label><input type="radio" name="q3" value="c"> It stores a separate scale for every single weight.</label>
+      <label><input type="radio" name="q3" value="d"> It rounds toward zero instead of to nearest.</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+Decode is memory-bound, so <b>bytes per weight is latency</b> — quantization is a speed technique first.
+Absmax: <code>scale = absmax(block)/max_code</code>, store <code>round(w/scale)</code>, rebuild
+<code>q*scale</code>. <b>One weight sets the scale for the whole block</b>, so an outlier degrades its
+neighbours, and <b>block size</b> is the dial: smaller block = less outlier damage, more scale overhead
+(<code>bits + 16/block</code>; NF4 at block 64 = <b>4.25 bits/weight</b>). <b>NF4</b> keeps 4 bits but
+places its 16 levels at <b>normal quantiles</b> — better average error than uniform INT4, <em>worse</em>
+tail error. Dequantizing NF4 is a <b>table lookup times the block's absmax</b>.
+</div>
+
+<h2>Where this points, for Netra Task A</h2>
+<p>You now have the whole shape of the kernel before writing a line of it. A dequantization kernel per
+program instance: load a tile of packed 4-bit codes, load that block's <code>absmax</code>, unpack two
+codes per byte, look each up in the 16-entry NF4 table, multiply by <code>absmax</code>, store fp16.
+Three things to think about while you write it, all of which are earlier lessons:</p>
+<ul>
+  <li>The packed codes are <b>two weights per byte</b> — your offsets are no longer element-indexed. That
+      is a <a href="0003-strides-and-layout.html">Lesson 3</a> problem.</li>
+  <li>Reading them must stay coalesced, and fp16 has a <em>lower</em> coalescing floor than fp32. That is
+      a <a href="0004-memory-coalescing.html">Lesson 4</a> problem.</li>
+  <li>The kernel is memory-bound, so benchmark it in <b>GB/s of output</b>, and compare against
+      <code>bitsandbytes</code> rather than against nothing. That is
+      <a href="0009-benchmarking-honestly.html">Lesson 9</a>.</li>
+</ul>
+
+<h2>Primary source</h2>
+<p>Read <a href="https://arxiv.org/abs/2305.14314">QLoRA: Efficient Finetuning of Quantized LLMs</a>
+§3 — the sections defining 4-bit NormalFloat, double quantization, and blockwise absmax (~15 min for
+those sections; skip the finetuning results for now). It is the paper NF4 comes from. Then skim
+<a href="https://github.com/bitsandbytes-foundation/bitsandbytes">bitsandbytes</a> for the reference
+implementation you will be benchmarking against.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. Two good ones:
+<em>"why is the scale fp16 and not fp32?"</em> and <em>"what would activation quantization change?"</em>
+Ask either and it becomes a lesson.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="0006-matmul-and-tiling.html">Lesson 6 — Matmul earns its intensity by tiling</a></li>
+  <li><a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a> — go set the simulator to INT4 and re-read the decode row with this lesson's eyes.</li>
+</ul>
+
+<p class="foot">Lesson 5 · Zain's AI Inference Lab · sources: QLoRA (arXiv:2305.14314), bitsandbytes</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: blockwise absmax quantization. Fixed sample, fully deterministic. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+
+  var NF4 = [-1.0, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453,
+             -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0.0,
+             0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224,
+             0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1.0];
+  var N = 64;
+
+  // Same LCG + Box-Muller every load: the learner can compare runs, not chase noise.
+  function weights(dist) {
+    var s = 12345;
+    function r() { s = (1103515245 * s + 12345) % 2147483648; return s / 2147483648; }
+    var out = [];
+    for (var i = 0; i < N; i++) {
+      var u = Math.max(r(), 1e-9), v = r();
+      out.push(Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v));
+    }
+    if (dist === 'outlier') out[5] = out[5] > 0 ? 9.5 : -9.5;
+    return out;
+  }
+
+  function quantize(w, fmt, B) {
+    var deq = [], codes = [], scales = [];
+    for (var b = 0; b < w.length; b += B) {
+      var blk = w.slice(b, b + B);
+      var am = 0;
+      for (var i = 0; i < blk.length; i++) am = Math.max(am, Math.abs(blk[i]));
+      if (am === 0) am = 1e-9;
+      scales.push(am);
+      for (var j = 0; j < blk.length; j++) {
+        var v = blk[j], code, d;
+        if (fmt === 'int8') {
+          var s8 = am / 127;
+          code = Math.max(-127, Math.min(127, Math.round(v / s8)));
+          d = code * s8;
+        } else if (fmt === 'int4') {
+          var s4 = am / 7;
+          code = Math.max(-7, Math.min(7, Math.round(v / s4)));
+          d = code * s4;
+        } else {
+          var nv = v / am, best = 0, bd = Infinity;
+          for (var k = 0; k < NF4.length; k++) {
+            var e = Math.abs(NF4[k] - nv);
+            if (e < bd) { bd = e; best = k; }
+          }
+          code = best;
+          d = NF4[best] * am;
+        }
+        codes.push(code);
+        deq.push(d);
+      }
+    }
+    return { deq: deq, codes: codes, scales: scales };
+  }
+
+  function render() {
+    var fmt = $('q-fmt').value, B = +$('q-block').value, dist = $('q-dist').value;
+    var w = weights(dist);
+    var q = quantize(w, fmt, B);
+
+    var errs = w.map(function (v, i) { return Math.abs(v - q.deq[i]); });
+    var maxErr = Math.max.apply(null, errs);
+    var rms = Math.sqrt(errs.reduce(function (a, e) { return a + e * e; }, 0) / N);
+
+    var bits = (fmt === 'int8' ? 8 : 4) + 16 / B;
+    var speedup = 16 / bits;                       // vs fp16 weights, decode being memory-bound
+
+    var bars = $('q-bars');
+    while (bars.firstChild) bars.removeChild(bars.firstChild);
+    for (var i = 0; i < N; i++) {
+      var d = document.createElement('div');
+      var h = maxErr > 0 ? Math.max(1, (errs[i] / maxErr) * 78) : 1;
+      d.style.cssText = 'flex:1 1 0;height:' + h.toFixed(1) + 'px;background:#2a78d6;border-radius:2px 2px 0 0';
+      d.setAttribute('title', 'weight ' + i + ': error ' + errs[i].toFixed(4));
+      bars.appendChild(d);
+    }
+    $('q-barlab').textContent = 'weight 0 … weight 63   ·   tallest bar = worst error, ' +
+      maxErr.toFixed(4) + '   ·   block boundaries every ' + B;
+
+    var t = $('q-table');
+    while (t.firstChild) t.removeChild(t.firstChild);
+    var head = document.createElement('tr');
+    ['#', 'weight', 'code', 'dequantized', 'error'].forEach(function (h2) {
+      var th = document.createElement('th'); th.textContent = h2; head.appendChild(th);
+    });
+    t.appendChild(head);
+    for (var r2 = 0; r2 < 8; r2++) {
+      var tr = document.createElement('tr');
+      [String(r2), w[r2].toFixed(4), String(q.codes[r2]), q.deq[r2].toFixed(4), errs[r2].toFixed(4)]
+        .forEach(function (cell) {
+          var td = document.createElement('td'); td.textContent = cell; tr.appendChild(td);
+        });
+      t.appendChild(tr);
+    }
+
+    var ro = $('q-readout');
+    while (ro.firstChild) ro.removeChild(ro.firstChild);
+    [['block 0 absmax = ', q.scales[0].toFixed(4) + '   (shared by ' + B + ' weights)'],
+     ['RMS error      = ', rms.toFixed(4) + '     worst-case error = ' + maxErr.toFixed(4)],
+     ['bits / weight  = ', (fmt === 'int8' ? '8' : '4') + ' + 16/' + B + ' = ' + bits.toFixed(3) +
+                           '   (' + (N * bits / 8).toFixed(0) + ' B for 64 weights, vs 128 B in fp16)'],
+     ['decode speedup = ', speedup.toFixed(2) + '× vs fp16 weights  (memory-bound: bytes are latency)']
+    ].forEach(function (row) {
+      var k2 = document.createElement('span'); k2.className = 'k'; k2.textContent = row[0];
+      ro.appendChild(k2);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+
+    var v2 = $('q-verdict');
+    var blocksHit = 0;
+    for (var bb = 0; bb < N; bb += B) {
+      var any = false;
+      for (var m = bb; m < bb + B; m++) if (errs[m] > 0.15) any = true;
+      if (any) blocksHit++;
+    }
+    if (dist === 'outlier' && B >= 64) {
+      v2.className = 'verdict-bar bad';
+      v2.textContent = '⚠ One outlier, whole block degraded. absmax jumped to ' + q.scales[0].toFixed(2) +
+        ', so all ' + B + ' weights are now rounded on a much coarser ruler — RMS ' + rms.toFixed(4) +
+        '. Shrink the block and watch the damage get contained.';
+    } else if (dist === 'outlier') {
+      v2.className = 'verdict-bar safe';
+      v2.textContent = '✔ Damage contained. At block ' + B + ' the outlier only inflates the scale of ' +
+        'the ' + (N / B) + '-block group it sits in; the rest keep their tight scales. RMS is down to ' +
+        rms.toFixed(4) + ' — paid for with ' + bits.toFixed(2) + ' bits/weight instead of 4.25.';
+    } else {
+      v2.className = 'verdict-bar safe';
+      v2.textContent = 'RMS ' + rms.toFixed(4) + ', worst case ' + maxErr.toFixed(4) + ', ' +
+        bits.toFixed(2) + ' bits/weight, ' + speedup.toFixed(2) + '× faster decode. ' +
+        'Switch between INT4 and NF4 and compare both error columns, not just the first.';
+    }
+  }
+
+  ['q-fmt', 'q-block', 'q-dist'].forEach(function (id) {
+    $(id).addEventListener('input', render);
+  });
+  render();
+})();
+</script>
+</body>
+</html>

@@ -9,5 +9,6 @@ git add \
   README/index.html \
   RESOURCES/index.html \
   NOTES/index.html \
+  CURRICULUM/index.html \
   experiments/0001-vector-add-on-t4/index.html \
   records/0001-triton-program-instance/index.html

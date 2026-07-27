@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 4 — The GPU fetches more than you asked for</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0004-memory-coalescing.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>You cannot buy 4 bytes. The shop only sells 32.</h1>
+<p class="sub">Lesson 4 · memory coalescing · the hardware bill for the strides you chose in Lesson 3</p>
+
+<div class="ask">
+<a href="0003-strides-and-layout.html">Lesson 3</a> ended with a scattered traversal and a promise to put
+a number on the waste. Here is the number. This is the single highest-leverage idea in memory-bound
+kernel work, and it is why two kernels that read "the same data" can differ by 8×.
+</div>
+
+<h2>The one fact the whole lesson hangs on</h2>
+
+<p>DRAM is not byte-addressable from the GPU's point of view. Memory is delivered in fixed-size
+<b>sectors of 32 bytes</b>. Ask for one <code>float32</code> — 4 bytes — and the hardware moves 32 bytes
+across the bus and throws 28 of them away.</p>
+
+<p>That would be catastrophic, except for the second fact: a <b>warp</b> of 32 threads issues its load as
+one instruction. The memory system looks at all 32 addresses together and issues the <em>minimum number
+of sectors</em> that covers them. So the question is never "how many bytes do I need?" It is:</p>
+
+<blockquote><b>How many 32-byte sectors do my 32 lanes land in?</b> Four is perfect. Thirty-two is a
+disaster. Everything interesting lives between them.</blockquote>
+
+<table>
+<tr><th>Access pattern (32 lanes × fp32)</th><th>Sectors</th><th>Bytes moved</th><th>Useful</th></tr>
+<tr><td>Stride 1, aligned — the happy path</td><td>4</td><td>128 B</td><td><b>100%</b></td></tr>
+<tr><td>Stride 1, misaligned by 4 bytes</td><td>5</td><td>160 B</td><td>80%</td></tr>
+<tr><td>Stride 2</td><td>8</td><td>256 B</td><td>50%</td></tr>
+<tr><td>Stride 8 or more</td><td>32</td><td>1024 B</td><td><b>12.5%</b></td></tr>
+</table>
+
+<p>Read the last row again. <b>Same 128 useful bytes. Eight times the traffic.</b> On a memory-bound
+kernel — which, per <a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a>, is most of them —
+that is an 8× slowdown that no amount of arithmetic cleverness recovers.</p>
+
+<h2>Why a stride-8 read costs the same as stride-64</h2>
+
+<p>Once your lanes are far enough apart that no two share a sector, each lane needs its own. For
+<code>float32</code> that happens at stride 8 — 8 × 4 = 32 bytes — and it never gets worse, because 32
+sectors for 32 lanes is already one each. Efficiency bottoms out at <code>element_size / 32</code>:
+<b>12.5% for fp32, 6.25% for fp16</b>.</p>
+
+<p>This is exactly the transposed read from Lesson 3. A row of <code>x.T</code> with an inner stride of
+1024 is not "slightly worse" than a contiguous row — it is at the floor.</p>
+
+<h2>What Triton actually does for you here</h2>
+
+<figure>
+  <figcaption>The Lesson 1 offsets, re-read as an access pattern rather than as indices.</figcaption>
+  <p class="listen"><b>Listen first:</b> the vector-add kernel built its offsets as
+  <code>block_start</code> plus <code>tl.arange</code> from zero to <code>BLOCK_SIZE</code>. That is a run
+  of consecutive integers, so consecutive lanes get consecutive addresses, so the loads coalesce
+  perfectly — and you never wrote the word coalescing. Compare the second form, where the offsets are
+  multiplied by a stride of eight. Same number of elements, same amount of arithmetic, and the compiler
+  can do nothing about it: the addresses genuinely are scattered, so the hardware genuinely must fetch
+  thirty-two sectors.</p>
+  <pre aria-hidden="true"><code>offsets = block_start + tl.arange(0, BLOCK_SIZE)        # consecutive → COALESCED
+x = tl.load(x_ptr + offsets)                            # 4 sectors per warp
+
+offsets = block_start + tl.arange(0, BLOCK_SIZE) * 8    # stride 8 → SCATTERED
+x = tl.load(x_ptr + offsets)                            # 32 sectors per warp, 12.5% useful</code></pre>
+</figure>
+
+<p>The Triton docs promise "automatic coalescing". That promise is real but narrow: the compiler assigns
+your tile's elements to lanes in the order that produces the fewest transactions <em>for the addresses
+you described</em>. It will not — cannot — invent a different access pattern. <b>Coalescing is a property
+of your indexing, not a compiler feature.</b></p>
+
+<h2>Micro-world: count the sectors</h2>
+
+<div class="sim" id="csim">
+  <h3>One warp, 32 lanes, one load instruction</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">Each block below is one 32-byte sector.
+  Orange means the hardware had to fetch it. The useful bytes never change — only the bill does.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="c-dtype">Element type</label>
+      <select id="c-dtype">
+        <option value="4" selected>float32 — 4 bytes</option>
+        <option value="2">float16 — 2 bytes</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="c-stride">Stride (elements): <output id="c-stride-v">1</output></label>
+      <input type="range" id="c-stride" min="1" max="16" step="1" value="1">
+    </div>
+    <div class="ctl">
+      <label for="c-align">Start offset (bytes): <output id="c-align-v">0</output></label>
+      <input type="range" id="c-align" min="0" max="28" step="4" value="0">
+    </div>
+    <div class="ctl" style="flex:0 0 auto;align-self:flex-end">
+      <button type="button" class="reset" id="c-reset">Reset to defaults</button>
+    </div>
+  </div>
+
+  <p class="axcap">32-byte sectors on the memory bus</p>
+  <div class="mem" id="c-sectors"></div>
+
+  <p class="viz-legend" style="margin-top:.8rem">
+    <span><i style="background:#eb6834"></i> fetched (you pay)</span>
+    <span><i style="background:#f0efec;border:1px solid #dedbd4"></i> skipped</span>
+  </p>
+
+  <p class="axcap">Bytes that crossed the bus</p>
+  <div id="c-bar" style="display:flex;gap:2px;height:24px;margin:.4rem 0 .3rem;max-width:100%"></div>
+  <p id="c-barlab" style="font-family:system-ui,-apple-system,sans-serif;font-size:.74rem;color:#52514e;margin:0"></p>
+
+  <div class="readout" id="c-readout"></div>
+  <p class="verdict-bar" id="c-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Start at stride 1, offset 0.</b> Four sectors, 128 bytes fetched, 128 useful. This is the only
+        configuration you should ever be happy with.</li>
+    <li><b>Nudge the start offset to 4 bytes.</b> Nothing about your data changed — but a fifth sector
+        appears and you just lost 20% of your bandwidth to <em>alignment alone</em>.</li>
+    <li><b>Walk the stride up: 1 → 2 → 4 → 8.</b> Watch the fetched bytes double each time while the
+        useful bytes sit still. This is the whole lesson in one drag.</li>
+    <li><b>Keep going past 8.</b> Nothing gets worse. You have hit the floor — one sector per lane. Stride
+        8 and stride 16 cost exactly the same, which is why "slightly strided" is a myth for fp32.</li>
+    <li><b>Switch to float16 at stride 1, then stride 16.</b> The floor is <em>lower</em> for smaller
+        types — 6.25%. Narrow dtypes make coalescing matter more, not less. Remember that in
+        <a href="0005-quantization-and-nf4.html">Lesson 5</a>.</li>
+  </ul>
+</div>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on what the bus actually moved</h3>
+  <form>
+    <fieldset data-answer="d"
+      data-why="32 lanes × 4 bytes = 128 contiguous bytes, and 128 ÷ 32 = 4 sectors. This is the happy path, and it is the pattern tl.arange gives you for free.">
+      <legend>1. A warp of 32 lanes each loads one <code>float32</code>, stride 1, aligned. How many 32-byte sectors are fetched?</legend>
+      <label><input type="radio" name="q1" value="a"> 1</label>
+      <label><input type="radio" name="q1" value="b"> 2</label>
+      <label><input type="radio" name="q1" value="c"> 32</label>
+      <label><input type="radio" name="q1" value="d"> 4</label>
+    </fieldset>
+
+    <fieldset data-answer="b"
+      data-why="At stride 8 the lanes are 32 bytes apart, so no two share a sector: 32 sectors × 32 bytes = 1024 bytes moved to deliver 128 useful ones. Efficiency 12.5%, the fp32 floor.">
+      <legend>2. Same warp at stride 8. How many bytes cross the bus for those same 128 useful ones?</legend>
+      <label><input type="radio" name="q2" value="a"> 128 bytes</label>
+      <label><input type="radio" name="q2" value="b"> 1024 bytes</label>
+      <label><input type="radio" name="q2" value="c"> 256 bytes</label>
+      <label><input type="radio" name="q2" value="d"> 512 bytes</label>
+    </fieldset>
+
+    <fieldset data-answer="c"
+      data-why="The compiler picks a good element-to-lane mapping for the addresses you described. It never rewrites your indexing, so a stride you chose is a stride you keep — coalescing is a property of your code, not a compiler feature.">
+      <legend>3. What does Triton's "automatic coalescing" actually give you?</legend>
+      <label><input type="radio" name="q3" value="a"> It reorders your offsets into a contiguous run.</label>
+      <label><input type="radio" name="q3" value="b"> It fetches only the bytes your program asked for.</label>
+      <label><input type="radio" name="q3" value="c"> A good lane mapping — it cannot fix your stride.</label>
+      <label><input type="radio" name="q3" value="d"> It merges strided loads into one wide transaction.</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+Memory moves in <b>32-byte sectors</b>, and a <b>warp of 32 lanes</b> issues one load whose addresses the
+hardware covers with the fewest sectors it can. Stride 1 aligned = <b>4 sectors, 100% useful</b>. Stride 8
+for fp32 = <b>32 sectors, 12.5% useful</b> — an 8× bandwidth tax on a memory-bound kernel, and the floor
+is <code>element_size / 32</code>. Misalignment alone costs one extra sector. A transposed read from
+<a href="0003-strides-and-layout.html">Lesson 3</a> <em>is</em> the strided case. Triton coalesces the
+lane mapping, not your indexing — <b>the access pattern is yours to choose.</b>
+</div>
+
+<h2>What this means for Experiment 0001</h2>
+<p>Vector add reads two <code>float32</code>s and writes one per element: <b>12 bytes of traffic per
+element, for one add</b>. Arithmetic intensity ≈ 0.083 FLOP/byte against a machine balance of 153 — about
+as memory-bound as code gets. So the only honest way to report that kernel is <b>GB/s, not TFLOP/s</b>,
+and the ceiling on an A100 is <code>2039 / 12 ≈ 170</code> billion elements per second. If
+<a href="../experiments/0001-vector-add-on-t4/">your T4 run</a> reports a bandwidth well under the card's
+spec, the first suspect is not Triton — it is the access pattern, and this micro-world is where you
+diagnose it.</p>
+
+<h2>Primary source</h2>
+<p>Read the <a href="https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#coalesced-access-to-global-memory">CUDA
+C++ Best Practices Guide § Coalesced Access to Global Memory</a> (~10 min). It is the source of record,
+with the same sector arithmetic and the misaligned-access figures. Read it <em>after</em> playing with
+the micro-world above — the diagrams will land instead of blur.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. The natural next question:
+<em>"if strided access is this bad, how does matmul ever go fast?"</em> That is
+<a href="0006-matmul-and-tiling.html">Lesson 6</a>, and the answer is reuse.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="0005-quantization-and-nf4.html">Lesson 5 — Quantization: buying bandwidth with precision</a> — Netra Task A.</li>
+  <li><a href="0003-strides-and-layout.html">Lesson 3 — A tensor is a pointer plus arithmetic</a> (where the strides came from)</li>
+  <li><a href="../reference/inference-roofline.html">Reference: the inference cost model</a></li>
+</ul>
+
+<p class="foot">Lesson 4 · Zain's AI Inference Lab · source: CUDA C++ Best Practices Guide</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: sector accounting for one warp-wide load. Deterministic. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var LANES = 32, SECTOR = 32, BW = 2039e9;
+
+  function render() {
+    var E = +$('c-dtype').value;
+    var S = +$('c-stride').value;
+    var A = +$('c-align').value;
+    $('c-stride-v').textContent = S;
+    $('c-align-v').textContent = A;
+
+    // Which sectors do the 32 lanes' byte ranges land in?
+    var touched = {}, first = Infinity, last = -Infinity;
+    for (var l = 0; l < LANES; l++) {
+      var addr = A + l * S * E;
+      for (var b = 0; b < E; b++) {
+        var sec = Math.floor((addr + b) / SECTOR);
+        touched[sec] = true;
+        if (sec < first) first = sec;
+        if (sec > last) last = sec;
+      }
+    }
+    var count = Object.keys(touched).length;
+    var useful = LANES * E;
+    var fetched = count * SECTOR;
+    var eff = useful / fetched;
+
+    // Draw the span of sectors, capped so the strip stays readable.
+    var strip = $('c-sectors');
+    while (strip.firstChild) strip.removeChild(strip.firstChild);
+    var CAP = 64, shown = Math.min(last - first + 1, CAP);
+    for (var i = 0; i < shown; i++) {
+      var sec2 = first + i;
+      var d = document.createElement('div');
+      d.className = 'm' + (touched[sec2] ? ' hot' : '');
+      d.style.width = '20px';
+      d.textContent = '';
+      d.setAttribute('title', 'sector ' + sec2 + (touched[sec2] ? ' — fetched' : ' — skipped'));
+      strip.appendChild(d);
+    }
+    if (last - first + 1 > CAP) {
+      var more = document.createElement('div');
+      more.className = 'm';
+      more.style.width = 'auto';
+      more.style.padding = '0 6px';
+      more.textContent = '+' + (last - first + 1 - CAP) + ' more';
+      strip.appendChild(more);
+    }
+
+    // Stacked bar: useful vs wasted, both labelled (never colour alone).
+    var bar = $('c-bar');
+    while (bar.firstChild) bar.removeChild(bar.firstChild);
+    var u = document.createElement('div');
+    u.style.cssText = 'flex:' + useful + ' 0 0;background:#2a78d6;border-radius:3px 0 0 3px';
+    bar.appendChild(u);
+    if (fetched > useful) {
+      var w = document.createElement('div');
+      w.style.cssText = 'flex:' + (fetched - useful) + ' 0 0;background:#e6e3dc;border-radius:0 3px 3px 0';
+      bar.appendChild(w);
+    } else {
+      u.style.borderRadius = '3px';
+    }
+    $('c-barlab').textContent =
+      useful + ' B useful  ·  ' + (fetched - useful) + ' B wasted  ·  ' + fetched + ' B moved';
+
+    var ro = $('c-readout');
+    while (ro.firstChild) ro.removeChild(ro.firstChild);
+    [['lane addresses  = ', A + ' + lane * ' + S + ' * ' + E + '  bytes  (lanes 0…31)'],
+     ['sectors touched = ', count + ' × 32 B = ' + fetched + ' B moved'],
+     ['useful bytes    = ', '32 lanes × ' + E + ' B = ' + useful + ' B'],
+     ['efficiency      = ', (eff * 100).toFixed(1) + '%   →  effective bandwidth ' +
+                            (BW * eff / 1e9).toFixed(0) + ' GB/s of 2039']
+    ].forEach(function (row) {
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = row[0];
+      ro.appendChild(k);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+
+    var floor = E / SECTOR;
+    var v = $('c-verdict');
+    if (eff > 0.999) {
+      v.className = 'verdict-bar safe';
+      v.textContent = '✔ Perfectly coalesced. ' + count + ' sectors deliver ' + useful +
+        ' bytes with nothing wasted. This is what tl.arange gives you when the stride is 1 and the ' +
+        'base is aligned.';
+    } else if (eff <= floor + 1e-9) {
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ At the floor. Every lane needs its own sector, so you move ' + fetched +
+        ' bytes to use ' + useful + ' — ' + (1 / eff).toFixed(1) + '× the traffic, and it cannot get ' +
+        'worse. Stride ' + S + ' and stride 16 cost the same here.';
+    } else {
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ Partially coalesced. ' + (1 / eff).toFixed(2) +
+        '× the traffic for the same data. On a memory-bound kernel that is a ' +
+        (1 / eff).toFixed(2) + '× slowdown, straight off the top.';
+    }
+  }
+
+  ['c-dtype', 'c-stride', 'c-align'].forEach(function (id) {
+    $(id).addEventListener('input', render);
+  });
+  $('c-reset').addEventListener('click', function () {
+    $('c-dtype').value = '4'; $('c-stride').value = '1'; $('c-align').value = '0'; render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>

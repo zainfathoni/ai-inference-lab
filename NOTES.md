@@ -110,3 +110,25 @@
   nothing) and resolved at `n=26` (six out-of-bounds lanes). Lesson 0001 also
   gained an in-page quiz. Both driven in a headless browser across states,
   mobile widths and edge cases before shipping.
+- 2026-07-27: **Built out the full lesson sequence, 0003–0009**, on request not to
+  gate further lessons on quiz results. The arc and its rationale now live in
+  [`CURRICULUM.md`](CURRICULUM.md) (rendered at `/CURRICULUM/`): strides →
+  coalescing → quantization → matmul/tiling → softmax → KV cache → benchmarking.
+  Every one is a mechanism lesson with a micro-world and an in-page quiz.
+  Deliberately deferred and listed in the curriculum: kernel fusion /
+  `torch.compile`, model loading, continuous batching, paged KV, QLoRA/FSDP2.
+  Design decisions worth keeping:
+  - **Lesson 5 is the Netra Task A on-ramp** and ends with the kernel's shape
+    plus which earlier lesson each sub-problem belongs to.
+  - **Lesson 8 pays off Lesson 2's cliffhanger** with a number (batch 28 vs the
+    154 needed) and honestly corrects Lesson 2's model: once the card is full,
+    KV cache is ~81% of decode traffic, not the weights.
+  - **Lesson 9 is the evidence lesson** — it carries the reporting checklist
+    every `experiments/` README should copy.
+  Facts were verified against primary sources rather than asserted: NF4's 16
+  levels and blocksize 64 from bitsandbytes; Llama 2 layer/head/KV-head counts
+  from the published configs (70B really does have a *smaller* KV cache than 7B,
+  thanks to 8 GQA heads); A100 312 TFLOP/s and 2039 GB/s from the datasheet.
+  Every micro-world's arithmetic was checked in a standalone script first, then
+  all seven were driven in headless Chrome and all 21 quiz questions graded
+  against their documented keys.

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<base href="../">
+<title>Curriculum · Zain's AI Inference Lab</title>
+<link rel="stylesheet" href="assets/lesson.css">
+<link rel="stylesheet" href="assets/markdown-page.css">
+</head>
+<body>
+<!-- Generated from ../CURRICULUM.md by scripts/render-markdown.mjs. Do not edit directly. -->
+<nav class="topnav"><a href="./">← Zain's AI Inference Lab</a><a class="raw-link" href="CURRICULUM.md">raw Markdown</a></nav>
+<main class="markdown-page markdown-body">
+<h1>Curriculum</h1>
+<p>The lesson sequence for this lab, and why it is in this order.</p>
+<p>Every lesson is one tightly-scoped idea with one tangible win, an embedded micro-world you can drive, and an in-page quiz. Lessons teach; they are not proof of mastery. The proof is in <code>records/</code> and <code>experiments/</code>.</p>
+<h2>The arc</h2>
+<p>The sequence answers one question in stages: <strong>what makes a fixed pile of arithmetic go fast on a GPU, and how do I prove I made it faster?</strong></p>
+<p>| # | Lesson | The one win | Type | | - | ------ | ----------- | ---- | | 0 | <a href="lessons/0000-what-inference-actually-is.html">What inference actually is</a> | Training is not your job; inference is a hot path | orientation | | 1 | <a href="lessons/0001-thread-block-grid-in-triton.html">Triton deletes a level</a> | You program a block, not a thread | mechanism | | 2 | <a href="lessons/0002-inference-is-the-ongoing-half.html">Inference is the half you pay for forever</a> | Serving is a memory-bandwidth amortization game | mechanism | | 3 | <a href="lessons/0003-strides-and-layout.html">A tensor is a pointer plus arithmetic</a> | Shape is a lie; strides are the truth | mechanism | | 4 | <a href="lessons/0004-memory-coalescing.html">The GPU fetches more than you asked for</a> | Access pattern, not byte count, sets your bandwidth | mechanism | | 5 | <a href="lessons/0005-quantization-and-nf4.html">Quantization: buying bandwidth with precision</a> | Block size is the accuracy/​compression dial — Netra Task A | mechanism | | 6 | <a href="lessons/0006-matmul-and-tiling.html">Matmul earns its intensity by tiling</a> | Reuse is what makes matmul compute-bound | mechanism | | 7 | <a href="lessons/0007-softmax-and-stability.html">Softmax, overflow, and the online trick</a> | Why attention needs a running max | mechanism | | 8 | <a href="lessons/0008-attention-and-kv-cache.html">Attention and the KV cache</a> | The cache is what caps your batch size | mechanism | | 9 | <a href="lessons/0009-benchmarking-honestly.html">Benchmarking a kernel honestly</a> | Most speedups are measurement bugs | mechanism |</p>
+<h2>Why this order</h2>
+<ul><li><strong>0–2 build the frame.</strong> What the job is, how the hardware is addressed, and what actually costs money. Lesson 2 is the economic argument the rest serves.</li><li><strong>3–4 are the memory pair.</strong> Layout decides addresses; addresses decide coalescing; coalescing decides the bandwidth you actually get. Every memory-bound kernel — which is most of them — is won or lost here.</li><li><strong>5 is the Netra forcing function.</strong> NF4 dequantization is Task A. It only makes sense once you believe the memory-bound argument from Lesson 2 and understand blocks from Lesson 1.</li><li><strong>6–8 are the model.</strong> Matmul, softmax, attention, KV cache — the ops that eat the time, in the order they depend on each other. Lesson 8 answers the question Lesson 2 deliberately left open: <em>what stops me raising the batch?</em></li><li><strong>9 closes every loop.</strong> A benchmark you cannot defend is not evidence, and every experiment in this lab is supposed to be evidence.</li></ul>
+<h2>Reference docs</h2>
+<ul><li><a href="reference/cuda-triton-glossary.html">CUDA ↔ Triton cheat-sheet</a> — execution-model vocabulary</li><li><a href="reference/inference-roofline.html">The inference cost model on one page</a> — roofline formulas and the lever table</li></ul>
+<h2>Not covered yet</h2>
+<p>Deliberately deferred, in the order they are most likely to be needed next:</p>
+<ul><li>Kernel fusion as a bandwidth technique, and what <code>torch.compile</code> fuses for you</li><li>Model loading: safetensors, <code>mmap</code>, and cold-start cost</li><li>Continuous batching and the throughput/latency tradeoff in a real server</li><li>Paged and quantized KV cache</li><li>QLoRA / FSDP2, once the quantization lesson has an experiment behind it</li></ul>
+<p>Ask for any of these and it becomes the next lesson.</p>
+</main>
+</body>
+</html>

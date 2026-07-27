@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 7 — Softmax, overflow, and the online trick</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0007-softmax-and-stability.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>The op that turns into <code>NaN</code> if you write it the way it's defined</h1>
+<p class="sub">Lesson 7 · numerical stability and streaming reduction · the prerequisite for FlashAttention</p>
+
+<div class="ask">
+Softmax looks like the easiest op in the model: exponentiate, divide by the sum. Written exactly that way
+it produces <code>NaN</code> on real attention logits in fp16, and even once fixed it reads its input
+<b>three times</b> — which, per <a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a>, is three
+times the cost that matters. Both problems have the same fix, and that fix is the core of FlashAttention.
+</div>
+
+<h2>Problem one: the definition overflows</h2>
+
+<figure>
+  <figcaption>Softmax as defined, and the value of x at which it breaks in each float format.</figcaption>
+  <p class="listen"><b>Listen first:</b> softmax of x sub i is e to the x sub i, divided by the sum over j
+  of e to the x sub j. The trouble is the exponential. In float thirty-two the largest representable
+  number is about three-point-four times ten to the thirty-eighth, and the exponential passes that at an
+  input of about eighty-eight-point-seven. In float sixteen the ceiling is only sixty-five thousand five
+  hundred and four, which the exponential passes at an input of just eleven-point-one. Attention logits
+  routinely exceed eleven. Once one term becomes infinity, the sum becomes infinity, and infinity divided
+  by infinity is not a number — so a single large logit poisons the entire row.</p>
+  <pre aria-hidden="true"><code>softmax(x)_i = exp(x_i) / Σ_j exp(x_j)          # the textbook definition
+
+exp overflows when:
+    float32   x >  88.7      (max ≈ 3.40e38)
+    float16   x >  11.1      (max = 65504)     ← attention logits pass this easily
+
+one inf in the numerator → inf in the sum → inf/inf → NaN for the WHOLE row</code></pre>
+</figure>
+
+<h2>The fix that costs nothing mathematically</h2>
+
+<p>Subtract the row maximum from every element before exponentiating. Multiply the top and bottom by
+<code>exp(−m)</code> and it cancels exactly — the result is <b>identical in exact arithmetic</b>, and
+in floating point the largest exponent is now <code>exp(0) = 1</code>, so overflow is impossible.</p>
+
+<figure>
+  <figcaption>The max-subtraction identity: same value, no overflow, but an extra pass.</figcaption>
+  <p class="listen"><b>Listen first:</b> let m be the maximum of x. Then softmax of x sub i equals e to
+  the quantity x sub i minus m, divided by the sum of e to the x sub j minus m. Every exponent is now at
+  most zero, so every exponential is at most one and underflow to zero is harmless. The catch is the cost:
+  you must find m before you can exponentiate anything, and you must finish the sum before you can divide.
+  That is three separate sweeps over the same data — read for the max, read for the sum, read again to
+  normalise.</p>
+  <pre aria-hidden="true"><code>m = max(x)
+softmax(x)_i = exp(x_i - m) / Σ_j exp(x_j - m)   # identical result, every exponent ≤ 0
+
+but now:   pass 1 → find m
+           pass 2 → exp and accumulate the sum
+           pass 3 → divide
+           THREE reads of x from memory</code></pre>
+</figure>
+
+<h2>Problem two: passes are the cost</h2>
+
+<p>Softmax does a handful of FLOPs per element against several bytes of traffic — arithmetic intensity
+well under 1. It is squarely memory-bound, so by <a href="0002-inference-is-the-ongoing-half.html">Lesson
+2</a>'s rule its runtime is <b>bytes ÷ bandwidth</b>, and the number of passes <em>is</em> the runtime.
+Going from 3 passes to 2 is a 33% speedup, for free, forever.</p>
+
+<h2>The online trick: fuse the max and the sum</h2>
+
+<p>You do not actually need the final max before you start summing — you need to be able to <b>correct</b>
+the running sum whenever the max changes. If your running max jumps from <code>m_old</code> to
+<code>m_new</code>, every term already accumulated was scaled by <code>exp(−m_old)</code> and should have
+been scaled by <code>exp(−m_new)</code>. So multiply the running sum by
+<code>exp(m_old − m_new)</code> and carry on.</p>
+
+<figure>
+  <figcaption>Online softmax: one fused pass maintaining a running max and a corrected running sum.</figcaption>
+  <p class="listen"><b>Listen first:</b> start with the running max at negative infinity and the running
+  sum at zero. For each new element, the new max is the larger of the old max and this element. Then the
+  new sum is the old sum times e to the old max minus the new max — that is the correction — plus e to
+  this element minus the new max. When the max does not change, the correction factor is e to the zero,
+  which is one, and nothing happens. When the max does change, the correction shrinks everything already
+  accumulated onto the new scale. After one pass you have both the true max and the correctly scaled sum,
+  and a second pass divides.</p>
+  <pre aria-hidden="true"><code>m = -inf ;  d = 0
+for x_i in x:                                  # ONE fused pass
+    m_new = max(m, x_i)
+    d     = d * exp(m - m_new) + exp(x_i - m_new)      # rescale, then add
+    m     = m_new
+
+y_i = exp(x_i - m) / d                         # second pass: normalise
+</code></pre>
+</figure>
+
+<blockquote>This is the whole idea behind <b>FlashAttention</b>. If softmax can be computed by streaming —
+accumulating a running max and a running, rescaled sum — then attention never has to materialise the full
+sequence-by-sequence score matrix in HBM. It can work tile by tile and correct as it goes. Lesson 7 is
+the arithmetic; <a href="0008-attention-and-kv-cache.html">Lesson 8</a> is the consequence.</blockquote>
+
+<h2>Micro-world: break it, then fix it</h2>
+
+<div class="sim" id="ssim">
+  <h3>Eight logits, three algorithms</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">Fixed input values scaled by the slider, so
+  every run is reproducible. Step through the online version to watch its internal state correct itself.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="s-algo">Algorithm</label>
+      <select id="s-algo">
+        <option value="naive" selected>naive — exp(x) / Σexp(x)</option>
+        <option value="safe">max-subtracted — 3 passes</option>
+        <option value="online">online / streaming — 2 passes</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="s-dtype">Accumulate in</label>
+      <select id="s-dtype">
+        <option value="16" selected>float16 — max 65504</option>
+        <option value="32">float32 — max 3.4e38</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="s-scale">Logit scale ×<output id="s-scale-v">1</output></label>
+      <input type="range" id="s-scale" min="1" max="40" step="1" value="1">
+    </div>
+  </div>
+
+  <p class="axcap">Per-element internal state</p>
+  <table id="s-table" style="font-size:.74rem"></table>
+
+  <div class="btnrow" id="s-steprow" hidden>
+    <button type="button" class="reset" id="s-step">Step one element →</button>
+    <button type="button" class="reset" id="s-all">Run to the end</button>
+    <button type="button" class="reset" id="s-rewind">Rewind</button>
+  </div>
+
+  <div class="readout" id="s-readout"></div>
+  <p class="verdict-bar" id="s-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Start naive, fp16, scale 1.</b> It works. This is why the bug ships — at small logits the
+        textbook formula is completely fine.</li>
+    <li><b>Drag the scale to 4 with naive + fp16.</b> The largest logit passes 11.1, one
+        <code>exp</code> returns infinity, and the whole row becomes <code>NaN</code>. Not the one big
+        element — <em>every</em> element. That is the failure this lesson exists to reproduce.</li>
+    <li><b>Switch to max-subtracted, same settings.</b> Fixed, and the outputs are the values you would
+        have got. Note the pass count went from 2 to 3 — the fix is not free, it just costs bandwidth
+        instead of correctness.</li>
+    <li><b>Switch to fp32 and push the scale to 30.</b> Naive breaks again, just later. Wider floats move
+        the cliff; they do not remove it.</li>
+    <li><b>Choose online and press "Step one element" repeatedly.</b> Watch the running max and the
+        correction factor. Most steps have a correction of exactly 1.000 — the rescale only fires when a
+        new maximum arrives, which is what makes this cheap.</li>
+  </ul>
+</div>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on stability</h3>
+  <form>
+    <fieldset data-answer="a"
+      data-why="Multiplying numerator and denominator by exp(-m) cancels exactly, so the value is unchanged — but the biggest exponent becomes exp(0) = 1, so nothing can overflow. Underflow to zero on the small terms is harmless.">
+      <legend>1. Why subtract the row maximum before exponentiating?</legend>
+      <label><input type="radio" name="q1" value="a"> It puts the largest exponent at zero, so nothing overflows.</label>
+      <label><input type="radio" name="q1" value="b"> It is what makes the outputs sum to one.</label>
+      <label><input type="radio" name="q1" value="c"> It reduces how many exponentials you compute.</label>
+      <label><input type="radio" name="q1" value="d"> It makes the backward pass cheaper to derive.</label>
+    </fieldset>
+
+    <fieldset data-answer="d"
+      data-why="fp16 tops out at 65504, and ln(65504) ≈ 11.1. That is a small number for an attention logit, which is why the naive formula is not merely inelegant in half precision — it is broken.">
+      <legend>2. In float16, above roughly what input value does <code>exp()</code> overflow?</legend>
+      <label><input type="radio" name="q2" value="a"> 65504</label>
+      <label><input type="radio" name="q2" value="b"> 88</label>
+      <label><input type="radio" name="q2" value="c"> 256</label>
+      <label><input type="radio" name="q2" value="d"> 11</label>
+    </fieldset>
+
+    <fieldset data-answer="b"
+      data-why="It gives the same answer as the 3-pass version — the rescaling is exact. What it saves is a full read of the input, which on a memory-bound op is the entire cost, and it is what lets FlashAttention avoid materialising the score matrix.">
+      <legend>3. What does the online (streaming) softmax actually buy you?</legend>
+      <label><input type="radio" name="q3" value="a"> A more accurate result than max-subtraction gives.</label>
+      <label><input type="radio" name="q3" value="b"> One fewer pass, by fusing the max and the sum.</label>
+      <label><input type="radio" name="q3" value="c"> Fewer exponentials, since it skips tiny terms.</label>
+      <label><input type="radio" name="q3" value="d"> Softmax without needing a reduction at all.</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+<code>exp</code> overflows above <b>11.1 in fp16</b> and 88.7 in fp32, and one <code>inf</code> makes the
+whole row <code>NaN</code>. Fix: <b>subtract the row max</b> — algebraically identical, every exponent
+≤ 0 — but it costs a <b>third pass</b> (max, sum, normalise). Softmax is <b>memory-bound</b>, so passes
+<em>are</em> the runtime. The <b>online</b> version fuses max and sum into one pass by rescaling the
+running sum by <code>exp(m_old − m_new)</code> whenever the max grows. Same answer, 2 passes — and
+because it streams, attention never has to materialise the score matrix. That is FlashAttention.
+</div>
+
+<h2>Primary source</h2>
+<p>Read <a href="https://arxiv.org/abs/1805.02867">Online normalizer calculation for softmax</a>
+(Milakov &amp; Gimelshein, 2018) — it is 5 pages and the algorithm above is Algorithm 3. Then look at the
+<a href="https://triton-lang.org/main/getting-started/tutorials/02-fused-softmax.html">Triton fused
+softmax tutorial</a> and notice what "fused" means in bandwidth terms: the whole row stays in registers,
+so the passes cost nothing extra.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. Worth asking:
+<em>"if the row doesn't fit in SRAM, what breaks?"</em> — that constraint is exactly why FlashAttention
+tiles, and it is the bridge into the next lesson.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="0008-attention-and-kv-cache.html">Lesson 8 — Attention and the KV cache</a> — where streaming softmax pays off, and what caps your batch size.</li>
+  <li><a href="0006-matmul-and-tiling.html">Lesson 6 — Matmul earns its intensity by tiling</a></li>
+</ul>
+
+<p class="foot">Lesson 7 · Zain's AI Inference Lab · source: Milakov &amp; Gimelshein 2018 (arXiv:1805.02867)</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: three softmax algorithms with simulated float-format overflow. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var BASE = [-1.2, 0.4, 2.1, -0.7, 3.3, 1.0, -2.5, 0.9];   // fixed input, always the same
+  var step = BASE.length;                                    // how far the online walk has advanced
+
+  function fmax() { return $('s-dtype').value === '16' ? 65504 : 3.4028235e38; }
+  function fexp(v) { var e = Math.exp(v); return e > fmax() ? Infinity : e; }
+  function show(v) {
+    if (Number.isNaN(v)) return 'NaN';
+    if (!isFinite(v)) return v > 0 ? 'inf' : '-inf';
+    if (v !== 0 && Math.abs(v) < 1e-4) return v.toExponential(2);
+    return v.toFixed(4);
+  }
+  function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+  function table(cols, rows) {
+    var t = $('s-table');
+    clear(t);
+    var h = document.createElement('tr');
+    cols.forEach(function (c) { var th = document.createElement('th'); th.textContent = c; h.appendChild(th); });
+    t.appendChild(h);
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      r.forEach(function (c) { var td = document.createElement('td'); td.textContent = c; tr.appendChild(td); });
+      t.appendChild(tr);
+    });
+  }
+
+  function render() {
+    var algo = $('s-algo').value;
+    var sc = +$('s-scale').value;
+    $('s-scale-v').textContent = sc;
+    var x = BASE.map(function (v) { return v * sc; });
+    $('s-steprow').hidden = (algo !== 'online');
+
+    var ro = $('s-readout'), v = $('s-verdict');
+    clear(ro);
+    var lines, passes, bad = false, note;
+
+    if (algo === 'naive') {
+      var e = x.map(fexp);
+      var sum = e.reduce(function (a, b) { return a + b; }, 0);
+      var y = e.map(function (ei) { return ei / sum; });
+      bad = y.some(function (v2) { return Number.isNaN(v2) || !isFinite(v2); });
+      table(['i', 'x_i', 'exp(x_i)', 'softmax_i'],
+        x.map(function (xi, i) { return [String(i), show(xi), show(e[i]), show(y[i])]; }));
+      passes = 2;
+      lines = [['max exp(x)  = ', show(Math.max.apply(null, e.map(function (q) { return isFinite(q) ? q : Infinity; }))) +
+                                  '   (format ceiling ' + ($('s-dtype').value === '16' ? '65504' : '3.4e38') + ')'],
+               ['Σ exp(x)    = ', show(sum)],
+               ['passes over x = ', '2  (exp+sum, then divide)']];
+      note = bad
+        ? '⚠ Broken. exp() overflowed, the sum became infinite, and inf/inf gave NaN — for every element, ' +
+          'not just the big one. One large logit destroyed the whole row.'
+        : '✔ Works — at this scale. The largest logit is ' + show(Math.max.apply(null, x)) +
+          ', still under the ceiling. Push the scale slider until it is not.';
+    } else if (algo === 'safe') {
+      var m = Math.max.apply(null, x);
+      var e2 = x.map(function (xi) { return fexp(xi - m); });
+      var sum2 = e2.reduce(function (a, b) { return a + b; }, 0);
+      var y2 = e2.map(function (ei) { return ei / sum2; });
+      bad = y2.some(function (q) { return Number.isNaN(q); });
+      table(['i', 'x_i', 'x_i − m', 'exp(x_i − m)', 'softmax_i'],
+        x.map(function (xi, i) { return [String(i), show(xi), show(xi - m), show(e2[i]), show(y2[i])]; }));
+      passes = 3;
+      lines = [['m = max(x)  = ', show(m)],
+               ['max exponent= ', '0  →  exp(0) = 1, so overflow is impossible by construction'],
+               ['Σ exp(x−m)  = ', show(sum2)],
+               ['passes over x = ', '3  (max, then exp+sum, then divide)  ← the price of the fix']];
+      note = '✔ Stable at any scale. Every exponent is ≤ 0 by construction. The cost is the third pass — ' +
+             'and on a memory-bound op, passes are the runtime.';
+    } else {
+      // Online: replay the fused pass up to `step` so the learner can watch the state.
+      var m2 = -Infinity, d = 0, rows = [];
+      for (var i = 0; i < step; i++) {
+        var mOld = m2;
+        var mNew = Math.max(mOld, x[i]);
+        var corr = (mOld === -Infinity) ? 1 : Math.exp(mOld - mNew);
+        d = d * corr + Math.exp(x[i] - mNew);
+        m2 = mNew;
+        rows.push([String(i), show(x[i]), show(mNew),
+                   (mOld === -Infinity ? '—' : corr.toFixed(4)), show(d)]);
+      }
+      table(['i', 'x_i', 'running max m', 'rescale exp(m_old−m_new)', 'running sum d'], rows);
+      var done = step === x.length;
+      passes = 2;
+      lines = [['running max = ', show(m2) + (done ? '   (= the true max)' : '   (not final yet)')],
+               ['running sum = ', show(d)],
+               ['rescales fired = ', String(rows.filter(function (r) { return r[3] !== '—' && r[3] !== '1.0000'; }).length) +
+                                     ' of ' + Math.max(rows.length - 1, 0) + ' steps'],
+               ['passes over x = ', '2  (fused max+sum, then divide)']];
+      note = done
+        ? '✔ One fused pass done. Same max and same sum as the 3-pass version, one read cheaper. Notice ' +
+          'how few steps actually needed a rescale — the correction is nearly free.'
+        : 'Stepping… ' + step + ' of ' + x.length + ' elements folded in. Watch the rescale column: it ' +
+          'is exactly 1.0000 unless this element became the new maximum.';
+    }
+
+    lines.forEach(function (row) {
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = row[0];
+      ro.appendChild(k);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+    v.className = 'verdict-bar ' + (bad ? 'bad' : 'safe');
+    v.textContent = note;
+  }
+
+  $('s-step').addEventListener('click', function () {
+    step = Math.min(step + 1, BASE.length); render();
+  });
+  $('s-all').addEventListener('click', function () { step = BASE.length; render(); });
+  $('s-rewind').addEventListener('click', function () { step = 0; render(); });
+  ['s-algo', 's-dtype', 's-scale'].forEach(function (id) {
+    $(id).addEventListener('input', function () {
+      if (id === 's-algo' && $('s-algo').value === 'online') step = 0;
+      render();
+    });
+  });
+  render();
+})();
+</script>
+</body>
+</html>

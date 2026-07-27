@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 6 — Matmul earns its intensity by tiling</title>
+<link rel="canonical" href="https://ai.zainf.dev/lessons/0006-matmul-and-tiling.html">
+<link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+<a class="skip" href="#lesson-main">Skip to lesson content</a>
+<main id="lesson-main">
+
+<h1>Matmul is not born compute-bound. It is made compute-bound.</h1>
+<p class="sub">Lesson 6 · tiling and reuse · where arithmetic intensity actually comes from</p>
+
+<div class="ask">
+Everyone repeats that matmul is the compute-bound op. Written naively it is nothing of the sort — it runs
+at <b>0.3% of an A100's peak</b>. The gap between 0.3% and 84% is one idea, and it is the same idea that
+makes <code>BLOCK_SIZE</code> worth autotuning.
+</div>
+
+<h2>The arithmetic that should worry you</h2>
+
+<p>Take <code>C[M,N] = A[M,K] @ B[K,N]</code>. The work is fixed: <code>2·M·N·K</code> FLOPs. Now count
+the traffic if every output element fetches its own inputs from HBM:</p>
+
+<figure>
+  <figcaption>Naive matmul: no reuse, so intensity collapses to a constant.</figcaption>
+  <p class="listen"><b>Listen first:</b> each of the M times N output elements reads a row of A of length
+  K and a column of B of length K, so the bytes moved are two times M times N times K times bytes per
+  element. Divide the FLOP count by that and almost everything cancels — you are left with one over bytes
+  per element. In fp16 that is one half of a FLOP per byte, against a machine that wants a hundred and
+  fifty-three. Naive matmul is not slightly memory-bound; it is three hundred times short.</p>
+  <pre aria-hidden="true"><code>FLOPs  = 2·M·N·K
+bytes  = 2·M·N·K · bytes_per_element        # every output fetches its own row and column
+
+intensity = FLOPs / bytes = 1 / bytes_per_element
+          = 0.5 FLOP/byte in fp16           vs machine balance 153   ← 306x short</code></pre>
+</figure>
+
+<p>The <em>M</em>, <em>N</em> and <em>K</em> all cancel. Problem size does not save you. This is the same
+kind of cancellation you saw in <a href="0002-inference-is-the-ongoing-half.html">Lesson 2</a> when the
+parameter count vanished out of decode intensity, and it means the same thing: <b>the ratio is structural,
+and only a change of structure fixes it.</b></p>
+
+<h2>The structural change: compute a tile, not an element</h2>
+
+<p>Instead of one output element at a time, one program computes a <b>BM × BN tile</b> of C. It loads a
+strip of A and a strip of B into fast on-chip memory once, then every loaded element gets used across the
+whole tile:</p>
+
+<figure>
+  <figcaption>Tiled matmul: each loaded element serves an entire row or column of the output tile.</figcaption>
+  <p class="listen"><b>Listen first:</b> when you compute a tile of BM by BN outputs, each element of the
+  A strip you loaded is used BN times — once for every column of the tile — and each element of the B
+  strip is used BM times. The bytes drop by that reuse factor, so intensity becomes two divided by the
+  quantity one over BM plus one over BN, all over bytes per element. For a square tile of side T in fp16
+  that simplifies to T over two. A 128-wide tile gives 64 FLOPs per byte; a 256-wide tile gives 128. The
+  tile size is not a tuning detail — it is the term that sets your arithmetic intensity.</p>
+  <pre aria-hidden="true"><code>intensity = 2 / ((1/BM + 1/BN) · bytes_per_element)
+
+square tile, side T, fp16:   intensity = T / 2
+
+T =  16  →    8 FLOP/byte      (still hopeless)
+T = 128  →   64 FLOP/byte      (now you are in the game)
+T = 256  →  128 FLOP/byte      (near the 153 ridge)</code></pre>
+</figure>
+
+<p>That is the entire trick. <b>Reuse is the only thing that creates arithmetic intensity</b>, and a tile
+is how you buy reuse. Elementwise ops like vector add can never do this — there is nothing to reuse,
+which is why they sit permanently on the memory-bound side.</p>
+
+<h2>Two honest caveats</h2>
+
+<p><b>1. This model counts HBM traffic only.</b> It assumes every re-read of an A-strip goes all the way
+to DRAM. In reality the L2 cache catches many of them, so a real kernel lands <em>between</em> the tiled
+line and the "perfect reuse" line below. Treat the tiled figure as a pessimistic bound and the ideal
+figure as an unreachable one.</p>
+
+<p><b>2. Perfect reuse would read each matrix exactly once</b> — <code>(M·K + K·N + M·N)</code> elements
+total. For a square 4096 matmul in fp16 that is an intensity of about <b>1365 FLOP/byte</b>: massively
+compute-bound. That number is why the folklore says "matmul is compute-bound." The folklore is describing
+a <em>well-tiled</em> matmul and forgetting to say so.</p>
+
+<h2>What Triton does, and what it leaves to you</h2>
+
+<p><a href="0001-thread-block-grid-in-triton.html">Lesson 1</a> listed shared-memory allocation and
+synchronization among the things the compiler handles. This is where that matters: you write a tile, and
+Triton stages it through on-chip memory, picks tensor-core instructions, and schedules the async copies.
+What it does <b>not</b> do is pick <code>BLOCK_M</code>, <code>BLOCK_N</code> and <code>BLOCK_K</code> for
+you — those are <code>tl.constexpr</code> parameters, and choosing them <em>is</em> choosing your
+intensity. That is what <code>triton.autotune</code> is searching over, and now you know what it is
+searching <em>for</em>.</p>
+
+<h2>Micro-world: buy intensity with tile size</h2>
+
+<div class="sim" id="msim">
+  <h3>Square matmul on one A100 80GB</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">Three strategies, same FLOPs, same answer.
+  Only the traffic differs — and traffic is the whole story.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="m-n">Matrix size n (n×n @ n×n)</label>
+      <select id="m-n">
+        <option value="1024">1024</option>
+        <option value="2048">2048</option>
+        <option value="4096" selected>4096</option>
+        <option value="8192">8192</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="m-t">Tile size T (T×T of C)</label>
+      <select id="m-t">
+        <option value="16">16</option>
+        <option value="32">32</option>
+        <option value="64">64</option>
+        <option value="128" selected>128</option>
+        <option value="256">256</option>
+      </select>
+    </div>
+    <div class="ctl">
+      <label for="m-dt">Element type</label>
+      <select id="m-dt">
+        <option value="2" selected>float16 — 2 bytes</option>
+        <option value="4">float32 — 4 bytes</option>
+      </select>
+    </div>
+  </div>
+
+  <p class="axcap">Arithmetic intensity, log scale — where each strategy lands against the 153 ridge</p>
+  <div class="viz" id="viz-mm">
+    <svg viewBox="0 0 660 108" aria-labelledby="mm-desc">
+      <desc id="mm-desc"></desc>
+      <g id="mm-axis"></g>
+      <g id="mm-marks"></g>
+    </svg>
+  </div>
+
+  <p class="viz-legend">
+    <span><i style="background:#2a78d6"></i> naive (no reuse)</span>
+    <span><i style="background:#eb6834"></i> tiled T×T</span>
+    <span><i style="background:#1baf7a"></i> perfect reuse (each matrix read once)</span>
+  </p>
+
+  <p class="axcap">Table view</p>
+  <table id="m-table" style="font-size:.78rem"></table>
+
+  <div class="readout" id="m-readout"></div>
+  <p class="verdict-bar" id="m-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Look at the naive row first.</b> 0.5 FLOP/byte, about 1 TFLOP/s — <em>0.3% of the card</em>.
+        Change n to anything you like; it does not move. Problem size cannot rescue a bad ratio.</li>
+    <li><b>Walk the tile size up: 16 → 32 → 64 → 128 → 256.</b> Intensity doubles each step and so does
+        the achieved throughput. This is the single highest-leverage knob in a matmul kernel.</li>
+    <li><b>Find where tiled crosses the ridge.</b> In fp16 it takes T = 256 to reach 128 F/B and still not
+        quite clear 153. Now switch to float32 — the same tile buys you <em>half</em> the intensity,
+        because intensity is per <em>byte</em>, not per element.</li>
+    <li><b>Compare the tiled and perfect-reuse rows.</b> That gap is what the L2 cache is for. A real
+        kernel lives in between, which is why measured matmul beats this pessimistic model — and why you
+        should never quote a roofline number as a prediction.</li>
+    <li><b>Set T = 16 and n = 8192.</b> A huge, expensive matmul running at a few percent of peak. This is
+        exactly what an untuned <code>BLOCK_SIZE</code> looks like, and why <code>triton.autotune</code>
+        exists.</li>
+  </ul>
+</div>
+
+<h2>Check yourself</h2>
+
+<div class="quiz" data-quiz>
+  <h3>Three questions on reuse</h3>
+  <form>
+    <fieldset data-answer="c"
+      data-why="M, N and K all cancel, leaving 1/bytes_per_element — 0.5 FLOP/byte in fp16. The ratio is structural, so no problem size fixes it; only reuse does.">
+      <legend>1. Naive matmul in fp16, every output element fetching its own inputs. Arithmetic intensity?</legend>
+      <label><input type="radio" name="q1" value="a"> 2 FLOP/byte</label>
+      <label><input type="radio" name="q1" value="b"> 153 FLOP/byte</label>
+      <label><input type="radio" name="q1" value="c"> 0.5 FLOP/byte</label>
+      <label><input type="radio" name="q1" value="d"> 64 FLOP/byte</label>
+    </fieldset>
+
+    <fieldset data-answer="a"
+      data-why="A tile does not change the FLOP count at all — it changes how many times each loaded byte gets used. Each element of the loaded A strip serves every column of the tile, so reuse rises with tile width and intensity rises with it.">
+      <legend>2. What does computing a T×T output tile actually buy you?</legend>
+      <label><input type="radio" name="q2" value="a"> Each loaded element is reused T times.</label>
+      <label><input type="radio" name="q2" value="b"> The total FLOP count drops by a factor of T.</label>
+      <label><input type="radio" name="q2" value="c"> The compiler is allowed to use tensor cores.</label>
+      <label><input type="radio" name="q2" value="d"> The ragged edge no longer needs a mask.</label>
+    </fieldset>
+
+    <fieldset data-answer="d"
+      data-why="With perfect reuse the traffic is just the three matrices once: 3n² elements for 2n³ FLOPs, so intensity is 2n/(3·bytes) — about 1365 FLOP/byte at n=4096 in fp16. That figure, not the naive one, is what 'matmul is compute-bound' is really describing.">
+      <legend>3. A 4096³ fp16 matmul that reads each matrix from HBM exactly once. Roughly what intensity?</legend>
+      <label><input type="radio" name="q3" value="a"> About 64 FLOP/byte</label>
+      <label><input type="radio" name="q3" value="b"> About 153 FLOP/byte</label>
+      <label><input type="radio" name="q3" value="c"> About 512 FLOP/byte</label>
+      <label><input type="radio" name="q3" value="d"> About 1365 FLOP/byte</label>
+    </fieldset>
+  </form>
+</div>
+
+<div class="defense">
+<b>Cold-recall defense (one breath):</b><br>
+Matmul FLOPs are fixed at <code>2·M·N·K</code>; only the <b>traffic</b> is negotiable. Naive, every output
+fetches its own row and column, so <em>M, N, K cancel</em> and intensity is just
+<code>1/bytes_per_element</code> — <b>0.5 F/B in fp16</b>, hopeless. A <b>T×T output tile</b> makes each
+loaded element serve T outputs, giving <code>intensity = 2/((1/BM + 1/BN)·bytes)</code> = <b>T/2</b> in
+fp16. <b>Reuse is the only source of arithmetic intensity</b>, which is why elementwise ops can never
+escape the memory-bound side. Triton stages the tile through shared memory for you, but
+<code>BLOCK_M/N/K</code> are yours — picking them <em>is</em> picking your intensity.
+</div>
+
+<h2>Primary source</h2>
+<p>Read the <a href="https://triton-lang.org/main/getting-started/tutorials/03-matrix-multiplication.html">Triton
+tutorial — Matrix Multiplication</a> (~20 min). Read it with one question in mind: <em>where does
+<code>BLOCK_SIZE_M/N/K</code> appear, and what does each one do to the reuse ratio?</em> The autotune
+configs at the top of that file are a list of intensity choices, and you can now compute what each one is
+worth before running it.</p>
+
+<p class="ask">💬 I'm your teacher for this — ask me followups any time. The question this lesson sets up:
+<em>"if bigger tiles are always better, why not T = 1024?"</em> The answer is shared-memory capacity and
+occupancy, and it is a good next lesson whenever you want it.</p>
+
+<h2>Read next</h2>
+<ul>
+  <li><a href="0007-softmax-and-stability.html">Lesson 7 — Softmax, overflow, and the online trick</a></li>
+  <li><a href="0004-memory-coalescing.html">Lesson 4 — The GPU fetches more than you asked for</a> (tiles only help if the loads coalesce)</li>
+  <li><a href="../reference/inference-roofline.html">Reference: the inference cost model</a></li>
+</ul>
+
+<p class="foot">Lesson 6 · Zain's AI Inference Lab · source: Triton matmul tutorial, NVIDIA A100 datasheet</p>
+</main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: three traffic models for the same matmul. Deterministic arithmetic. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var PEAK = 312e12, BW = 2039e9, BALANCE = PEAK / BW;
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var COL = { naive: '#2a78d6', tiled: '#eb6834', ideal: '#1baf7a' };
+
+  function el(tag, attrs, text) {
+    var n = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function clear(g) { while (g.firstChild) g.removeChild(g.firstChild); }
+  function eng(x, u) {
+    var s = ['', 'K', 'M', 'G', 'T', 'P'], i = 0;
+    while (x >= 1000 && i < s.length - 1) { x /= 1000; i++; }
+    return (x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : Math.round(x)) + ' ' + s[i] + u;
+  }
+
+  var AX = { L: 16, R: 16, W: 660, y: 58, x0: Math.log10(0.2), x1: Math.log10(4000) };
+  AX.pw = AX.W - AX.L - AX.R;
+  function px(ai) {
+    var v = Math.min(Math.max(ai, 0.2), 4000);
+    return AX.L + (Math.log10(v) - AX.x0) / (AX.x1 - AX.x0) * AX.pw;
+  }
+
+  function drawAxis() {
+    var g = $('mm-axis');
+    clear(g);
+    g.appendChild(el('line', { x1: AX.L, x2: AX.L + AX.pw, y1: AX.y, y2: AX.y,
+                               stroke: '#c3c2b7', 'stroke-width': 1 }));
+    [0.5, 1, 10, 100, 1000].forEach(function (v) {
+      g.appendChild(el('line', { x1: px(v), x2: px(v), y1: AX.y - 4, y2: AX.y + 4,
+                                 stroke: '#c3c2b7', 'stroke-width': 1 }));
+      g.appendChild(el('text', { x: px(v), y: AX.y + 18, 'text-anchor': 'middle', class: 'tick' },
+                       String(v)));
+    });
+    g.appendChild(el('line', { x1: px(BALANCE), x2: px(BALANCE), y1: AX.y - 30, y2: AX.y + 4,
+                               stroke: '#0b0b0b', 'stroke-width': 1, opacity: '.45' }));
+    g.appendChild(el('text', { x: px(BALANCE), y: AX.y - 34, 'text-anchor': 'middle', class: 'tick' },
+                     'ridge 153'));
+    g.appendChild(el('text', { x: AX.L, y: AX.y + 34, class: 'axlabel' },
+                     '← memory-bound   ·   FLOP/byte   ·   compute-bound →'));
+  }
+
+  function render() {
+    var n = +$('m-n').value, T = +$('m-t').value, bpp = +$('m-dt').value;
+    var F = 2 * n * n * n;
+    var rows = [
+      { key: 'naive', name: 'Naive — no reuse',        bytes: 2 * n * n * n * bpp },
+      { key: 'tiled', name: 'Tiled ' + T + '×' + T,    bytes: n * n * n * (2 / T) * bpp },
+      { key: 'ideal', name: 'Perfect reuse',           bytes: 3 * n * n * bpp }
+    ].map(function (r) {
+      var tC = F / PEAK, tM = r.bytes / BW, t = Math.max(tC, tM);
+      r.ai = F / r.bytes;
+      r.bound = tC >= tM ? 'compute' : 'memory';
+      r.tf = F / t / 1e12;
+      r.pct = (r.tf * 1e12) / PEAK * 100;
+      r.t = t;
+      return r;
+    });
+
+    var g = $('mm-marks');
+    clear(g);
+    rows.forEach(function (r, i) {
+      var x = px(r.ai), y = AX.y - 14 + (i % 2 ? 0 : 0);
+      g.appendChild(el('circle', { cx: x, cy: AX.y, r: 6, fill: COL[r.key],
+                                   stroke: '#fff', 'stroke-width': 2 }));
+      // Direct labels are mandatory here: the aqua slot is below 3:1 on white.
+      g.appendChild(el('text', { x: x, y: i === 1 ? AX.y - 14 : AX.y - 14 + (i === 0 ? 0 : 0),
+                                 'text-anchor': i === 2 ? 'end' : (i === 0 ? 'start' : 'middle'),
+                                 class: 'dlabel' }, r.ai.toFixed(r.ai < 10 ? 1 : 0)));
+    });
+    $('mm-desc').textContent = 'Intensity axis. Naive ' + rows[0].ai.toFixed(1) +
+      ', tiled ' + rows[1].ai.toFixed(0) + ', perfect reuse ' + rows[2].ai.toFixed(0) +
+      ' FLOP per byte, against a ridge of 153. Same values as the table below.';
+
+    var t2 = $('m-table');
+    clear(t2);
+    var head = document.createElement('tr');
+    ['Strategy', 'HBM traffic', 'Intensity', 'Bound by', 'Achieved', '% of peak'].forEach(function (h) {
+      var th = document.createElement('th'); th.textContent = h; head.appendChild(th);
+    });
+    t2.appendChild(head);
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      [r.name, eng(r.bytes, 'B'), r.ai.toFixed(r.ai < 10 ? 2 : 0) + ' F/B',
+       r.bound.toUpperCase(), r.tf.toFixed(0) + ' TFLOP/s', r.pct.toFixed(1) + '%']
+        .forEach(function (c, ci) {
+          var td = document.createElement(ci === 0 ? 'th' : 'td');
+          if (ci === 0) td.setAttribute('scope', 'row');
+          td.textContent = c;
+          tr.appendChild(td);
+        });
+      t2.appendChild(tr);
+    });
+
+    var ro = $('m-readout');
+    clear(ro);
+    [['FLOPs          = ', '2·' + n + '³ = ' + eng(F, 'FLOP') + '   (identical for all three rows)'],
+     ['tiled traffic  = ', 'n³·(1/' + T + ' + 1/' + T + ')·' + bpp + ' B = ' + eng(rows[1].bytes, 'B')],
+     ['tiled intensity= ', '2 / ((2/' + T + ')·' + bpp + ') = ' + rows[1].ai.toFixed(0) + ' FLOP/byte'],
+     ['speedup vs naive= ', (rows[1].t > 0 ? (rows[0].t / rows[1].t).toFixed(0) : '—') +
+                            '× just from tiling — no change to the maths performed']
+    ].forEach(function (row) {
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = row[0];
+      ro.appendChild(k);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+
+    var v = $('m-verdict');
+    if (rows[1].bound === 'compute') {
+      v.className = 'verdict-bar safe';
+      v.textContent = '✔ A ' + T + '×' + T + ' tile clears the ridge: ' + rows[1].ai.toFixed(0) +
+        ' FLOP/byte, ' + rows[1].pct.toFixed(0) + '% of peak even on this pessimistic HBM-only model. ' +
+        'Reuse turned the same arithmetic from memory-bound into compute-bound.';
+    } else {
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ Still memory-bound at ' + rows[1].ai.toFixed(0) + ' FLOP/byte — ' +
+        rows[1].pct.toFixed(1) + '% of peak, against the naive baseline of ' +
+        rows[0].pct.toFixed(1) + '%. Tiling has already bought you ' +
+        (rows[0].t / rows[1].t).toFixed(0) + '×; a wider tile buys more.';
+    }
+  }
+
+  ['m-n', 'm-t', 'm-dt'].forEach(function (id) { $(id).addEventListener('input', render); });
+  drawAxis();
+  render();
+})();
+</script>
+</body>
+</html>
