@@ -121,6 +121,102 @@ add_kernel[grid](x, y, output, n_elements, BLOCK_SIZE=1024)</code></pre>
   <li><code>mask</code> — because a program owns a fixed-size tile, the last (ragged) block masks off the overflow. This is the price of thinking in tiles.</li>
 </ul>
 
+<h2>Micro-world: launch the grid yourself</h2>
+
+<p>The three lines that trip everyone up are <code>pid</code>, <code>offsets</code> and <code>mask</code>.
+Drive them. Pick a buffer size, pick a <code>BLOCK_SIZE</code>, and watch which program owns which elements —
+then take the mask away and watch what breaks.</p>
+
+<div class="sim" id="gsim">
+  <h3>Grid launch &amp; the ragged last block</h3>
+  <p style="font-size:.84rem;margin:.2rem 0 0;color:#6b6b6b">Each coloured cell is one element of the
+  buffer. Each group of cells is one <b>program instance</b>. Click a program to see its actual values.</p>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="g-n">n_elements: <output id="g-n-v">26</output></label>
+      <input type="range" id="g-n" min="1" max="32" step="1" value="26">
+    </div>
+    <div class="ctl">
+      <label for="g-bs">BLOCK_SIZE</label>
+      <select id="g-bs">
+        <option value="4">4</option>
+        <option value="8" selected>8</option>
+        <option value="16">16</option>
+      </select>
+    </div>
+    <div class="ctl" style="flex:1 1 16rem">
+      <label class="toggle" for="g-mask">
+        <input type="checkbox" id="g-mask" checked>
+        Apply the mask (<code>offsets &lt; n_elements</code>)
+      </label>
+    </div>
+  </div>
+
+  <p style="font-family:system-ui,-apple-system,sans-serif;font-size:.76rem;color:#52514e;margin:.2rem 0 0"
+     id="g-launch"></p>
+
+  <div class="strip" id="g-strip"></div>
+
+  <p class="viz-legend" style="margin-top:.9rem">
+    <span><i style="background:#2a78d6"></i> selected program</span>
+    <span><i style="background:#cde2fb"></i> real element</span>
+    <span><i style="background:#f0efec;border:1px solid #dedbd4"></i> masked off</span>
+    <span><i style="background:#d03b3b"></i> out-of-bounds access</span>
+  </p>
+
+  <div class="readout" id="g-readout"></div>
+  <p class="verdict-bar" id="g-verdict" role="status" aria-live="polite"></p>
+
+  <ul class="try">
+    <li><b>Start with n_elements = 32, BLOCK_SIZE = 8.</b> Four programs, eight elements each, an exact
+        fit. Now untick the mask — <em>nothing bad happens</em>. This is exactly why the mask looks like
+        bookkeeping noise.</li>
+    <li><b>Now drag n_elements down to 26</b> and leave the mask off. Same kernel, same launch, and the
+        last program is now writing six elements past the end of your buffer. That is a memory stomp,
+        and on a GPU it will not politely crash.</li>
+    <li><b>Tick the mask back on.</b> Same six lanes, now disabled. The mask is not defensive
+        programming — it is the price of a program owning a <em>fixed-size</em> tile.</li>
+    <li><b>Watch the program count as you cross 24 → 25</b> with BLOCK_SIZE 8. One extra program appears
+        to cover a single element, and drags seven phantom lanes in with it.</li>
+    <li><b>Click program 0, then the last program.</b> Identical code, identical
+        <code>BLOCK_SIZE</code> — only <code>pid</code> and therefore <code>mask</code> differ. That is
+        SPMD.</li>
+  </ul>
+</div>
+
+<div class="quiz" data-quiz>
+  <h3>Check yourself</h3>
+  <form>
+    <fieldset data-answer="b"
+      data-why="The launch grid is triton.cdiv(n_elements, BLOCK_SIZE) — ceil(26/8) = 4. Three programs cover 24 elements; a fourth is needed for the remaining two.">
+      <legend>1. With <code>n_elements = 26</code> and <code>BLOCK_SIZE = 8</code>, how many program instances launch?</legend>
+      <label><input type="radio" name="q1" value="a"> 3</label>
+      <label><input type="radio" name="q1" value="b"> 4</label>
+      <label><input type="radio" name="q1" value="c"> 8</label>
+      <label><input type="radio" name="q1" value="d"> 26</label>
+    </fieldset>
+
+    <fieldset data-answer="d"
+      data-why="block_start = pid * BLOCK_SIZE = 3 × 8 = 24. It is the first element that program owns, which is why offsets then run 24 through 31.">
+      <legend>2. In that same launch, what is <code>block_start</code> for the program with <code>pid = 3</code>?</legend>
+      <label><input type="radio" name="q2" value="a"> 3</label>
+      <label><input type="radio" name="q2" value="b"> 8</label>
+      <label><input type="radio" name="q2" value="c"> 26</label>
+      <label><input type="radio" name="q2" value="d"> 24</label>
+    </fieldset>
+
+    <fieldset data-answer="a"
+      data-why="Nothing clamps the offsets for you. tl.load and tl.store take the address you computed, so offsets 26 through 31 touch memory that is not yours — the exact failure the simulator shows in red.">
+      <legend>3. Program 3's <code>offsets</code> run 24–31, but only 24 and 25 are real. Remove the mask — then what?</legend>
+      <label><input type="radio" name="q3" value="a"> It reads and writes six elements past the buffer.</label>
+      <label><input type="radio" name="q3" value="b"> Triton silently clamps the offsets to the buffer.</label>
+      <label><input type="radio" name="q3" value="c"> The kernel refuses to launch with a shape error.</label>
+      <label><input type="radio" name="q3" value="d"> The final six threads exit before the store.</label>
+    </fieldset>
+  </form>
+</div>
+
 <blockquote>"But surely the threads still exist?" Yes — on the hardware. <code>tl.program_id(0)</code>
 compiles down to <code>blockIdx.x</code>, and the tile becomes many threads. The point is they're
 <b>absent from your source code</b>: the compiler does coalescing, thread swizzling, shared-memory
@@ -150,5 +246,135 @@ becomes "threads" on the GPU, or what a tile really is? Ask, and I'll build the 
 
 <p class="foot">Lesson 1 · Zain's AI Inference Lab · mission: understand the GPU execution model via Triton</p>
 </main>
+
+<script src="../assets/quiz.js"></script>
+<script>
+/* Micro-world: the launch grid and the ragged last block. Deterministic, no dependencies. */
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var sel = 0;                                   // currently inspected pid
+
+  function cdiv(a, b) { return Math.ceil(a / b); }
+
+  function render() {
+    var n  = +$('g-n').value;
+    var BS = +$('g-bs').value;
+    var masked = $('g-mask').checked;
+    var progs = cdiv(n, BS);
+    $('g-n-v').textContent = n;
+    if (sel >= progs) sel = progs - 1;           // keep the selection valid as the grid shrinks
+
+    $('g-launch').textContent =
+      'grid = (triton.cdiv(' + n + ', ' + BS + '),) = (' + progs + ',)   →   ' +
+      progs + ' program instance' + (progs === 1 ? ', owning' : 's, each owning') + ' a tile of ' + BS +
+      ' offsets (' + progs * BS + ' lanes for ' + n + (n === 1 ? ' real element)' : ' real elements)');
+
+    var strip = $('g-strip');
+    while (strip.firstChild) strip.removeChild(strip.firstChild);
+
+    var totalOob = 0;
+    for (var p = 0; p < progs; p++) {
+      var start = p * BS;
+      var oob = Math.max(0, start + BS - n);
+      if (!masked) totalOob += oob;
+
+      var tile = document.createElement('div');
+      tile.className = 'tile';
+
+      var name = document.createElement('p');
+      name.className = 'tname';
+      name.textContent = 'pid ' + p;
+      tile.appendChild(name);
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tsel';
+      btn.setAttribute('aria-pressed', String(p === sel));
+
+      var cells = document.createElement('div');
+      cells.className = 'cells';
+      for (var i = 0; i < BS; i++) {
+        var off = start + i;
+        var c = document.createElement('div');
+        var state;
+        if (off < n)        { state = p === sel ? 'cell sel' : 'cell'; }
+        else if (masked)    { state = 'cell masked'; }
+        else                { state = 'cell oob'; }
+        c.className = state;
+        cells.appendChild(c);
+      }
+      btn.appendChild(cells);
+
+      var st = document.createElement('p');
+      st.className = 'tstate' + (!masked && oob ? ' bad' : '');
+      st.textContent = oob === 0 ? 'all ' + BS + ' real'
+                     : masked    ? oob + ' masked off'
+                     : '⚠ ' + oob + ' out of bounds';
+      btn.appendChild(st);
+
+      btn.setAttribute('aria-label',
+        'Program ' + p + ', offsets ' + start + ' to ' + (start + BS - 1) + '. ' + st.textContent);
+      (function (pid) {
+        btn.addEventListener('click', function () { sel = pid; render(); });
+      })(p);
+
+      tile.appendChild(btn);
+      strip.appendChild(tile);
+    }
+
+    // Literal Triton values for the selected program.
+    var s = sel * BS;
+    var offs = [];
+    for (var j = 0; j < BS; j++) offs.push(s + j);
+    var maskVals = offs.map(function (o) { return o < n ? 'T' : 'F'; });
+    var shown = BS > 8
+      ? offs.slice(0, 4).join(', ') + ', … , ' + offs.slice(-2).join(', ')
+      : offs.join(', ');
+    var maskShown = BS > 8
+      ? maskVals.slice(0, 4).join(' ') + ' … ' + maskVals.slice(-2).join(' ')
+      : maskVals.join(' ');
+
+    var ro = $('g-readout');
+    while (ro.firstChild) ro.removeChild(ro.firstChild);
+    [['pid          = tl.program_id(0)   →  ', String(sel)],
+     ['block_start  = pid * BLOCK_SIZE   →  ', String(s)],
+     ['offsets      = block_start + tl.arange(0, ' + BS + ')  →  [', shown + ']'],
+     ['mask         = offsets < ' + n + '  →  [', maskShown + ']']].forEach(function (row) {
+      var k = document.createElement('span'); k.className = 'k'; k.textContent = row[0];
+      ro.appendChild(k);
+      ro.appendChild(document.createTextNode(row[1]));
+      ro.appendChild(document.createElement('br'));
+    });
+
+    // The verdict is about the whole launch, not just the program being inspected:
+    // only the LAST program can be ragged, whichever one you happen to have selected.
+    var v = $('g-verdict');
+    var ragged = n % BS;
+    if (totalOob > 0) {
+      v.className = 'verdict-bar bad';
+      v.textContent = '⚠ Unmasked: ' + totalOob + ' lane' + (totalOob === 1 ? '' : 's') +
+        ' read and write past the end of the buffer. tl.load / tl.store use the address you gave them — ' +
+        'nothing clamps it for you.';
+    } else if (ragged) {
+      v.className = 'verdict-bar safe';
+      v.textContent = 'Safe. Program ' + (progs - 1) + ' owns ' + BS + ' offsets but only ' + ragged +
+        (ragged === 1 ? ' is a real element' : ' are real elements') +
+        '; the mask disables the other ' + (BS - ragged) +
+        '. Untick the mask to see what that would have cost.';
+    } else {
+      v.className = 'verdict-bar safe';
+      v.textContent = 'Safe — and this is the trap. ' + n + ' divides evenly by ' + BS +
+        ', so every lane is real and the mask changes nothing. Drag n_elements off a multiple of ' +
+        BS + ' and try again with the mask off.';
+    }
+  }
+
+  ['g-n', 'g-bs', 'g-mask'].forEach(function (id) {
+    $(id).addEventListener('input', function () { render(); });
+  });
+  render();
+})();
+</script>
 </body>
 </html>

@@ -179,6 +179,49 @@ territory). Go feel them.</p>
     </div>
   </div>
 
+  <p class="viz-legend">
+    <span><i style="background:#2a78d6"></i> Prefill</span>
+    <span><i style="background:#eb6834"></i> Decode</span>
+    <span style="color:#898781">— the three panels and both tables below all show the same run</span>
+  </p>
+
+  <div class="viz" id="viz-roof">
+    <p class="vtitle">1 · Where each phase sits on the roofline</p>
+    <p class="vsub">Both axes are log scale. The roof is the hardware's ceiling; the ridge at 153 FLOP/byte
+      is where waiting on memory stops and doing arithmetic starts.</p>
+    <svg viewBox="0 0 660 300" aria-labelledby="roof-desc">
+      <desc id="roof-desc"></desc>
+      <g id="roof-grid"></g>
+      <polyline id="roof-line" fill="none" stroke="#0b0b0b" stroke-width="2"
+                stroke-linejoin="round" stroke-linecap="round" opacity=".55"></polyline>
+      <g id="roof-ridge"></g>
+      <g id="roof-marks"></g>
+    </svg>
+    <div class="viz-tip" id="roof-tip"></div>
+  </div>
+
+  <div class="viz" id="viz-split">
+    <p class="vtitle">2 · Where the request's wall-clock actually goes</p>
+    <p class="vsub">One full batch, start to finish. Prefill runs once; decode runs once per output token.</p>
+    <svg viewBox="0 0 660 86" aria-labelledby="split-desc">
+      <desc id="split-desc"></desc>
+      <g id="split-marks"></g>
+    </svg>
+    <div class="viz-tip" id="split-tip"></div>
+  </div>
+
+  <div class="viz" id="viz-util">
+    <p class="vtitle">3 · One decode step: which resource is the ceiling</p>
+    <p class="vsub">The bottleneck is whichever bar is pinned at 100%. The other one is what you are
+      paying for and not using.</p>
+    <svg viewBox="0 0 660 110" aria-labelledby="util-desc">
+      <desc id="util-desc"></desc>
+      <g id="util-marks"></g>
+    </svg>
+    <div class="viz-tip" id="util-tip"></div>
+  </div>
+
+  <p class="vtitle" style="font-family:system-ui,-apple-system,sans-serif;font-size:.82rem;font-weight:600;margin:1.4rem 0 .2rem">Table view</p>
   <table>
     <caption class="vh">Per-phase roofline breakdown</caption>
     <tr>
@@ -210,17 +253,25 @@ territory). Go feel them.</p>
   <p class="headline" id="s-headline" role="status" aria-live="polite"></p>
 
   <ul class="try">
-    <li><b>Start at the defaults</b> (7B, FP16, batch 1). Read the decode row's "math units busy" figure.
-        That is the number that kills the phrase "inference is expensive because it's a lot of math."</li>
-    <li><b>Drag batch to 64.</b> Each decode step still takes the <em>same</em> time — but GPU-seconds per
-        request collapses. You got ~35× cheaper without making the hardware any faster.</li>
-    <li><b>Go back to batch 1 and switch to INT4.</b> Identical FLOPs, ~4× faster. Proof the bottleneck was
-        never arithmetic.</li>
-    <li><b>Hunt the flip.</b> At FP16, raise the batch until decode says COMPUTE-bound. Note the number. Now
-        do it again at INT4 — the flip arrives much sooner. Why?</li>
-    <li><b>Watch the last two rows.</b> At batch 1, serving burns Llama 2 7B's whole training bill in about a
-        year. At batch 64 it takes almost four decades. Cloudflare's "one-time expense" is true or false
-        depending on a slider <em>you</em> control.</li>
+    <li><b>Start at the defaults</b> (7B, FP16, batch 1). In panel 3, the memory bar is pinned at 100% and
+        the math bar is a stub at 0.65%. That picture is what kills the phrase "inference is expensive
+        because it's a lot of math."</li>
+    <li><b>Drag the batch slider slowly and watch the orange decode dot in panel 1</b> climb the diagonal
+        toward the ridge. That diagonal <em>is</em> the memory wall: while you're on it, every extra
+        sequence in the batch is free arithmetic.</li>
+    <li><b>Stop at batch 64.</b> Each decode step still takes the <em>same</em> 6.87 ms — but GPU-seconds
+        per request collapses ~35×. You got cheaper without making the hardware faster.</li>
+    <li><b>Back to batch 1, switch to INT4.</b> Identical FLOPs, ~4× faster decode. The dot jumps right
+        along the roof without you adding a single operation. Proof the bottleneck was never arithmetic.</li>
+    <li><b>Hunt the ridge.</b> Raise the batch until the decode dot reaches the corner and panel 3 flips —
+        both bars at 100%. Note the number at FP16, then again at INT4. Quantization gets you there 4×
+        sooner. Why?</li>
+    <li><b>Watch panel 2 invert.</b> At batch 1, decode is 98.7% of the request. Push batch to 256 and
+        prefill takes over — you've traded a memory problem for a compute problem, which is a completely
+        different optimisation job.</li>
+    <li><b>Watch the last two table rows.</b> At batch 1, serving burns Llama 2 7B's whole training bill in
+        about a year. At batch 64 it takes almost four decades. Cloudflare's "one-time expense" is true or
+        false depending on a slider <em>you</em> control.</li>
   </ul>
 </div>
 
@@ -359,6 +410,197 @@ whenever you want it.</p>
     };
   }
 
+  /* ---- chart helpers -------------------------------------------------- */
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  var C = { prefill: '#2a78d6', decode: '#eb6834', grid: '#e1e0d9', axis: '#c3c2b7',
+            muted: '#898781', ink: '#0b0b0b', ink2: '#52514e', surface: '#ffffff' };
+
+  function el(tag, attrs, text) {
+    var n = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;        // labels are inserted as text, never markup
+    return n;
+  }
+  function clear(g) { while (g.firstChild) g.removeChild(g.firstChild); }
+
+  /* One tooltip per panel. Shown on pointer hover AND keyboard focus. */
+  function tipFor(panelId, tipId) {
+    var panel = document.getElementById(panelId), tip = document.getElementById(tipId);
+    return function (hit, title, lines) {
+      function show() {
+        clear(tip);
+        var b = document.createElement('b'); b.textContent = title; tip.appendChild(b);
+        lines.forEach(function (l) {
+          var e = document.createElement('em'); e.textContent = l;
+          tip.appendChild(e); tip.appendChild(document.createElement('br'));
+        });
+        var r = hit.getBoundingClientRect(), p = panel.getBoundingClientRect();
+        tip.style.left = (r.left - p.left + r.width / 2) + 'px';
+        tip.style.top  = (r.top  - p.top) + 'px';
+        tip.setAttribute('data-show', '');
+      }
+      function hide() { tip.removeAttribute('data-show'); }
+      hit.addEventListener('pointerenter', show);
+      hit.addEventListener('pointerleave', hide);
+      hit.addEventListener('focus', show);
+      hit.addEventListener('blur', hide);
+      hit.setAttribute('tabindex', '0');
+      hit.setAttribute('role', 'button');
+      hit.setAttribute('aria-label', title + '. ' + lines.join('. '));
+    };
+  }
+  var tipRoof = tipFor('viz-roof', 'roof-tip');
+  var tipSplit = tipFor('viz-split', 'split-tip');
+  var tipUtil = tipFor('viz-util', 'util-tip');
+
+  /* Panel 1 — roofline, log/log. Marks sit exactly on the roof by construction. */
+  var RF = { x0: Math.log10(0.5), x1: Math.log10(3e6), y0: Math.log10(1e12), y1: Math.log10(4e14),
+             L: 54, R: 16, T: 16, B: 34, W: 660, H: 300 };
+  RF.pw = RF.W - RF.L - RF.R; RF.ph = RF.H - RF.T - RF.B;
+  function rx(ai) { return RF.L + (Math.log10(ai) - RF.x0) / (RF.x1 - RF.x0) * RF.pw; }
+  function ry(f)  { return RF.T + (1 - (Math.log10(f) - RF.y0) / (RF.y1 - RF.y0)) * RF.ph; }
+
+  function drawRoofGrid() {
+    var g = document.getElementById('roof-grid');
+    clear(g);
+    [1, 10, 1e2, 1e3, 1e4, 1e5, 1e6].forEach(function (v, i) {
+      g.appendChild(el('line', { x1: rx(v), x2: rx(v), y1: RF.T, y2: RF.T + RF.ph,
+                                 stroke: C.grid, 'stroke-width': 1 }));
+      var lab = ['1', '10', '100', '1K', '10K', '100K', '1M'][i];
+      g.appendChild(el('text', { x: rx(v), y: RF.T + RF.ph + 14, 'text-anchor': 'middle',
+                                 class: 'tick' }, lab));
+    });
+    [1e12, 1e13, 1e14].forEach(function (v, i) {
+      g.appendChild(el('line', { x1: RF.L, x2: RF.L + RF.pw, y1: ry(v), y2: ry(v),
+                                 stroke: C.grid, 'stroke-width': 1 }));
+      g.appendChild(el('text', { x: RF.L - 7, y: ry(v) + 3, 'text-anchor': 'end', class: 'tick' },
+                       ['1', '10', '100'][i]));
+    });
+    g.appendChild(el('line', { x1: RF.L, x2: RF.L + RF.pw, y1: RF.T + RF.ph, y2: RF.T + RF.ph,
+                               stroke: C.axis, 'stroke-width': 1 }));
+    g.appendChild(el('text', { x: RF.L + RF.pw, y: RF.T + RF.ph + 30, 'text-anchor': 'end',
+                               class: 'axlabel' }, 'arithmetic intensity (FLOP/byte) →'));
+    g.appendChild(el('text', { x: RF.L, y: RF.T - 4, class: 'axlabel' }, 'TFLOP/s achieved'));
+
+    document.getElementById('roof-line').setAttribute('points',
+      [[0.5, BW * 0.5], [BALANCE, PEAK], [3e6, PEAK]]
+        .map(function (p) { return rx(p[0]) + ',' + ry(p[1]); }).join(' '));
+
+    var rg = document.getElementById('roof-ridge');
+    clear(rg);
+    rg.appendChild(el('line', { x1: rx(BALANCE), x2: rx(BALANCE), y1: ry(PEAK), y2: RF.T + RF.ph,
+                                stroke: C.axis, 'stroke-width': 1 }));
+    rg.appendChild(el('text', { x: rx(BALANCE) + 5, y: RF.T + RF.ph - 6, class: 'tick' },
+                     'ridge · 153 F/B'));
+    // Region labels go where marks never land: under the diagonal, and the empty lower-right.
+    // (Not along the top — prefill lives on the flat roof and would be written through.)
+    rg.appendChild(el('text', { x: rx(20), y: ry(BW * 20) + 18, 'text-anchor': 'middle',
+                                class: 'tick' }, '↙ memory-bound'));
+    rg.appendChild(el('text', { x: RF.L + RF.pw - 4, y: RF.T + RF.ph - 10, 'text-anchor': 'end',
+                                class: 'tick' }, 'compute-bound ↗'));
+  }
+
+  function drawRoof(pre, dec) {
+    var g = document.getElementById('roof-marks');
+    clear(g);
+    // Decode labels down-right, prefill up-centre. The two marks are always >=2 decades
+    // apart on x (prefill intensity = P x decode intensity), so the labels never collide.
+    [{ k: 'Decode', p: dec, c: C.decode, dx: 11, dy: 15, anchor: 'start' },
+     { k: 'Prefill', p: pre, c: C.prefill, dx: 0, dy: -14, anchor: 'middle' }].forEach(function (s) {
+      var ai = Math.min(Math.max(s.p.ai, 0.5), 3e6);
+      var x = rx(ai), y = ry(s.p.flops / s.p.t);
+      g.appendChild(el('circle', { cx: x, cy: y, r: 6, fill: s.c, stroke: C.surface,
+                                   'stroke-width': 2, class: 'mark' }));
+      g.appendChild(el('text', { x: x + s.dx, y: y + s.dy, 'text-anchor': s.anchor,
+                                 class: 'dlabel' }, s.k));
+      var hit = el('circle', { cx: x, cy: y, r: 15, class: 'hit' });
+      g.appendChild(hit);
+      tipRoof(hit, s.k, [
+        'intensity ' + s.p.ai.toFixed(1) + ' FLOP/byte',
+        (s.p.flops / s.p.t / 1e12).toFixed(1) + ' TFLOP/s achieved of 312 peak',
+        s.p.bound + '-bound'
+      ]);
+    });
+    document.getElementById('roof-desc').textContent =
+      'Roofline chart. Decode sits at ' + dec.ai.toFixed(1) + ' FLOP per byte (' + dec.bound +
+      '-bound); prefill at ' + pre.ai.toFixed(0) + ' (' + pre.bound +
+      '-bound). The ridge point is 153 FLOP per byte. Same figures as the table below.';
+  }
+
+  /* Panel 2 — 100% stacked split of one batch's wall-clock. */
+  function drawSplit(pre, dec, O) {
+    var g = document.getElementById('split-marks');
+    clear(g);
+    var L = 12, W = 636, y = 24, h = 24, gap = 2, r = 4;
+    var tPre = pre.t, tDec = O * dec.t, tot = tPre + tDec;
+    var w1 = Math.max(0, (tPre / tot) * W - gap / 2);
+    var w2 = Math.max(0, (tDec / tot) * W - gap / 2);
+
+    // Prefill starts at the baseline (square left end); decode carries the rounded data-end.
+    g.appendChild(el('path', { d: 'M' + L + ' ' + y + 'h' + w1 + 'v' + h + 'H' + L + 'z',
+                               fill: C.prefill, class: 'mark' }));
+    g.appendChild(el('path', { d: 'M' + (L + w1 + gap) + ' ' + y + 'h' + (w2 - r) +
+                                  'a' + r + ' ' + r + ' 0 0 1 ' + r + ' ' + r +
+                                  'v' + (h - 2 * r) + 'a' + r + ' ' + r + ' 0 0 1 ' + (-r) + ' ' + r +
+                                  'H' + (L + w1 + gap) + 'z', fill: C.decode, class: 'mark' }));
+
+    [{ k: 'Prefill', t: tPre, w: w1, x: L, c: C.prefill, n: '1 pass' },
+     { k: 'Decode', t: tDec, w: w2, x: L + w1 + gap, c: C.decode, n: O + ' passes' }].forEach(function (s) {
+      var pct = (s.t / tot) * 100;
+      var txt = pct.toFixed(1) + '%';
+      // Only label inside the segment when it comfortably fits; otherwise put it above.
+      if (s.w > 52) {
+        g.appendChild(el('text', { x: s.x + s.w / 2, y: y + 16, 'text-anchor': 'middle',
+                                   'font-size': 11, 'font-weight': 600, fill: C.surface }, txt));
+      } else {
+        g.appendChild(el('text', { x: s.x + s.w / 2, y: y - 6, 'text-anchor': 'middle',
+                                   class: 'dlabel' }, txt));
+      }
+      var hit = el('rect', { x: s.x, y: y - 8, width: Math.max(s.w, 10), height: h + 16, class: 'hit' });
+      g.appendChild(hit);
+      tipSplit(hit, s.k, [s.n, secs(s.t) + ' of ' + secs(tot), pct.toFixed(1) + '% of the batch']);
+    });
+
+    g.appendChild(el('text', { x: L, y: y + h + 18, class: 'tick' }, '0'));
+    g.appendChild(el('text', { x: L + W, y: y + h + 18, 'text-anchor': 'end', class: 'tick' },
+                     secs(tot) + ' total'));
+    document.getElementById('split-desc').textContent =
+      'Stacked bar. Prefill is ' + ((tPre / tot) * 100).toFixed(1) + '% of the batch wall-clock, decode ' +
+      ((tDec / tot) * 100).toFixed(1) + '%.';
+  }
+
+  /* Panel 3 — the two resource meters for one decode step. */
+  function drawUtil(dec, wbytes) {
+    var g = document.getElementById('util-marks');
+    clear(g);
+    var L = 92, W = 470, h = 24, r = 4;
+    var memUtil = (wbytes / BW) / dec.t;
+    var rows = [
+      { k: 'Math units', v: dec.util, sub: (dec.flops / dec.t / 1e12).toFixed(2) + ' of 312 TFLOP/s' },
+      { k: 'Memory bus', v: memUtil, sub: (wbytes / dec.t / 1e9).toFixed(0) + ' of 2039 GB/s' }
+    ];
+    rows.forEach(function (row, i) {
+      var y = 14 + i * 44;
+      g.appendChild(el('text', { x: L - 10, y: y + 17, 'text-anchor': 'end', class: 'dlabel' }, row.k));
+      g.appendChild(el('rect', { x: L, y: y, width: W, height: h, rx: r,
+                                 fill: 'rgba(235,104,52,0.13)' }));
+      var w = Math.max(row.v * W, 2);
+      g.appendChild(el('path', { d: 'M' + L + ' ' + y + 'h' + Math.max(w - r, 0) +
+                                    'a' + r + ' ' + r + ' 0 0 1 ' + r + ' ' + r +
+                                    'v' + (h - 2 * r) + 'a' + r + ' ' + r + ' 0 0 1 ' + (-r) + ' ' + r +
+                                    'H' + L + 'z', fill: C.decode, class: 'mark' }));
+      var pct = (row.v * 100).toFixed(row.v < 0.1 ? 2 : 0) + '%';
+      // A 0.65% bar cannot hold its own label — push the value past the bar end.
+      g.appendChild(el('text', { x: L + w + 8, y: y + 17, class: 'dlabel' }, pct));
+      var hit = el('rect', { x: L, y: y - 6, width: W, height: h + 12, class: 'hit' });
+      g.appendChild(hit);
+      tipUtil(hit, row.k, [pct + ' busy', row.sub]);
+    });
+    document.getElementById('util-desc').textContent =
+      'Two meters for one decode step: math units ' + (dec.util * 100).toFixed(2) +
+      '% busy, memory bus ' + (memUtil * 100).toFixed(0) + '% busy.';
+  }
+
   function render() {
     var m    = MODELS[+$('s-model').value];
     var bpp  = +$('s-prec').value;
@@ -416,7 +658,12 @@ whenever you want it.</p>
             'This is what "using the GPU you paid for" looks like.';
     }
     $('s-headline').innerHTML = msg;
+
+    drawRoof(pre, dec);
+    drawSplit(pre, dec, O);
+    drawUtil(dec, wbytes);
   }
+  drawRoofGrid();
 
   ['s-model', 's-prec', 's-prompt', 's-out', 's-batch'].forEach(function (id) {
     $(id).addEventListener('input', render);

@@ -50,6 +50,18 @@
   `data-why`); the script injects buttons, verdicts and the score. Micro-world
   simulators use the shared `.sim` styles in `lesson.css` but keep their own
   arithmetic inline in the lesson.
+- **Chart palette is fixed and validated — do not eyeball a new one.** Charts use
+  dataviz categorical slots 1 and 2, `#2a78d6` and `#eb6834`, checked against the
+  `#fff` card surface (CVD ΔE 24.7 protan, normal-vision ΔE 33.6, both ≥3:1). The
+  tokens live in the `.viz` block in `lesson.css`. Rules that hold across the lab:
+  series colour goes on marks only and never on text; a legend is always present
+  for two or more series; every chart has a table-view twin carrying the same
+  numbers; SVGs get a live `<desc>` but **not** `role="img"` (it would hide the
+  focusable hover targets from screen readers); hover state is mirrored on
+  keyboard focus. Re-run the validator if a third series is ever added.
+- Micro-world state visuals (`.strip`, `.cell`, `.tile`) separate tiles with 2px
+  surface gaps rather than cycling hues, and always pair a state colour with a
+  text label — never colour alone.
 - Glossary established in `reference/cuda-triton-glossary.html` — adhere to its
   terms in all future lessons (Grid, Block, Thread, Program instance, Tile,
   SPMD, Mask).
@@ -84,3 +96,17 @@
   batch 64, 4.00× INT4, 373-day crossover, COMPUTE flip at B=154 FP16 / B=39
   INT4). Chat quiz (fresh variant) issued — **no learning record yet**; write
   `records/0002-*` only after graded recall.
+- 2026-07-27: Gave both mechanism lessons real *visual* micro-worlds, on request.
+  Lesson 0002 gained three linked SVG panels driven by the existing controls —
+  a log/log roofline with live prefill/decode marks, a stacked prefill-vs-decode
+  wall-clock split, and two resource meters for one decode step — each with
+  hover *and* keyboard-focus tooltips, and the existing tables demoted to an
+  explicit "Table view" twin. Lesson 0001 got the micro-world it was missing as
+  a mechanism lesson: an interactive launch grid where you set `n_elements`,
+  `BLOCK_SIZE` and a mask toggle, click a program to see its literal `pid` /
+  `block_start` / `offsets` / `mask`, and watch the ragged last block stomp past
+  the buffer when the mask comes off. Its misconception — *"the mask is
+  bookkeeping noise"* — is reproduced at `n=32` (exact fit, mask changes
+  nothing) and resolved at `n=26` (six out-of-bounds lanes). Lesson 0001 also
+  gained an in-page quiz. Both driven in a headless browser across states,
+  mobile widths and edge cases before shipping.

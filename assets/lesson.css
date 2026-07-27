@@ -108,6 +108,70 @@ figcaption { font-size:.8rem; color:var(--muted); font-style:italic; margin-top:
 .sim .reset { font:inherit; font-size:.8rem; padding:.25rem .7rem; border:1px solid var(--rule);
               border-radius:5px; background:#eef1f4; color:var(--accent); cursor:pointer; }
 
+/* --- Charts inside micro-worlds ---
+   Palette: dataviz categorical slots 1 & 2, validated against the #fff card
+   surface (CVD ΔE 24.7 protan, normal-vision ΔE 33.6, both >= 3:1 contrast).
+   Series colour lives on marks only; all text uses the ink tokens below. */
+.viz { --series-prefill:#2a78d6; --series-decode:#eb6834;
+       --viz-grid:#e1e0d9; --viz-axis:#c3c2b7; --viz-muted:#898781;
+       --viz-ink:#0b0b0b; --viz-ink2:#52514e; --viz-good:#0ca30c; --viz-critical:#d03b3b;
+       position:relative; margin:1.2rem 0 0;
+       font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+.viz svg { display:block; width:100%; height:auto; overflow:visible; }
+.viz .vtitle { font-size:.82rem; font-weight:600; color:var(--viz-ink); margin:0 0 .1rem; }
+.viz .vsub { font-size:.75rem; color:var(--viz-muted); margin:0 0 .5rem; }
+.viz text { font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+.viz .tick { font-size:10px; fill:var(--viz-muted); font-variant-numeric:tabular-nums; }
+.viz .axlabel { font-size:10.5px; fill:var(--viz-ink2); }
+.viz .dlabel { font-size:11px; fill:var(--viz-ink2); font-weight:600; }
+.viz .hit { fill:transparent; cursor:pointer; }
+.viz .hit:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.viz .mark { transition:cx .25s ease, cy .25s ease, width .25s ease, x .25s ease; }
+@media (prefers-reduced-motion:reduce) { .viz .mark { transition:none; } }
+
+.viz-legend { display:flex; flex-wrap:wrap; gap:.3rem 1.1rem; align-items:center;
+              font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+              font-size:.78rem; color:#52514e; margin:.2rem 0 .9rem; }
+.viz-legend span { display:inline-flex; align-items:center; gap:.4rem; }
+.viz-legend i { width:10px; height:10px; border-radius:50%; display:inline-block; }
+
+.viz-tip { position:absolute; pointer-events:none; opacity:0; transform:translate(-50%,-115%);
+           background:#1a1a1a; color:#f4f1e8; border-radius:5px; padding:.35rem .55rem;
+           font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:.74rem;
+           line-height:1.35; white-space:nowrap; z-index:2; transition:opacity .12s ease; }
+.viz-tip[data-show] { opacity:1; }
+.viz-tip b { display:block; font-size:.86rem; font-weight:600; }
+.viz-tip em { font-style:normal; color:#bdb9ad; }
+
+/* --- Tile / memory strips (grid & mask micro-worlds) ---
+   Ownership is shown by the 2px surface gaps between cells and the 12px gap
+   between tiles, not by cycling hues. State is shown by fill + an always-present
+   text label, never by colour alone. */
+.strip { display:flex; flex-wrap:wrap; gap:12px; margin:.7rem 0 0; }
+.tile { flex:0 0 auto; }
+.tile .tname { font-family:system-ui,-apple-system,sans-serif; font-size:.7rem;
+               color:#52514e; margin:0 0 .25rem; text-align:center; }
+.tile .cells { display:flex; gap:2px; }
+.tile button.tsel { all:unset; cursor:pointer; display:block; border-radius:5px; padding:2px; }
+.tile button.tsel:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+.cell { width:17px; height:26px; border-radius:3px; background:#cde2fb; }
+.cell.sel { background:#2a78d6; }
+.cell.masked { background:#f0efec;
+               background-image:repeating-linear-gradient(45deg,transparent,transparent 3px,#dedbd4 3px,#dedbd4 5px); }
+.cell.oob { background:#d03b3b; }
+.tstate { font-family:system-ui,-apple-system,sans-serif; font-size:.7rem; margin:.25rem 0 0;
+          text-align:center; color:#52514e; }
+.tstate.bad { color:#a82f2f; font-weight:600; }
+.readout { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:.76rem; background:#f4f6f8;
+           border-left:3px solid var(--accent); padding:.7rem .9rem; margin:1rem 0 0;
+           overflow-x:auto; }
+.readout .k { color:#6b6b6b; }
+.verdict-bar { border-radius:6px; padding:.7rem 1rem; margin:.9rem 0 0; font-size:.86rem; }
+.verdict-bar.safe { background:#eef6ee; border-left:3px solid #0ca30c; }
+.verdict-bar.bad  { background:#faeeee; border-left:3px solid #d03b3b; }
+.sim .toggle { display:flex; align-items:center; gap:.45rem; font-size:.84rem; font-weight:600; }
+.sim .toggle input { width:auto; }
+
 /* --- In-page quiz widget (assets/quiz.js) --- */
 .quiz { border:1px solid var(--rule); border-radius:8px; background:#fff; padding:1rem 1.1rem;
         margin:1.4rem 0; }
